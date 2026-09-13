@@ -49,6 +49,6 @@ Render path: CDP screencast (JPEG) -> agent-browser WS -> viewer. Client-side tu
 - Decode with `createImageBitmap(Blob)` (off-main-thread), not `new Image()` + data URL; previous bitmap `.close()`d each frame.
 - Canvas backing store = frame's native pixels (e.g. 832x468), CSS-scaled to fill; NOT `innerWidth*devicePixelRatio` (was ~3x the pixels on a hi-DPI screen for no quality gain). 2d context created with `{alpha:false, desynchronized:true}`.
 - Measured ~53 fps rendered on-device (tools/measure-fps.mjs animates a page and counts acks), up from the old 15 cap.
-- Optional FPS meter: "Show FPS" in the controls panel (localStorage `thorFps`).
+- Persistent stats bar: a thin translucent top-center bar shows live viewer FPS · resolution · bandwidth (localStorage `thorStats`, default on; "Hide stats bar" in the controls panel). Replaced the old hidden "Show FPS" toggle.
 
-Not solved (remote-render side, not streaming): the remote Chromium runs `--disable-gpu` (no namespaces for the GPU sandbox here), so WebGL/WebGPU render in software (SwiftShader) and heavy scenes drop frames at the source before streaming. For GPU-accurate/heavy creative work, test in the device's real Chrome too. Daemon-wide stream quality is `AGENT_BROWSER_STREAM_QUALITY` (default 80) if gradients need it.
+GPU is real now (updated): the remote Chromium runs `--use-angle=vulkan` (NOT `--disable-gpu`) and renders WebGL2 AND WebGPU on the actual Adreno 740 GPU via Mesa Turnip + the companion `turnip-kgsl-shim` (see that repo). Canvas Lab pieces run at 60fps through the viewer. Do NOT re-add `--disable-gpu` or the Vulkan compositing feature (the latter crash-loops/overheats the device). Daemon-wide stream quality is `AGENT_BROWSER_STREAM_QUALITY` (default 80) if gradients need it.

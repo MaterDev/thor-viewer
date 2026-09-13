@@ -7,7 +7,10 @@ const { chromium } = require('playwright-core');
 const ab = (...a) => new Promise(r => execFile('/home/key/.local/bin/agent-browser', a, { timeout: 20000 }, (e, o) => r(e ? '' : o.trim())));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const original = await ab('get', 'url');
-await ab('open', 'https://en.wikipedia.org/wiki/Cat');
+await ab('open', 'http://127.0.0.1:4860/');
+await sleep(1500);
+// load a striking WebGPU piece so the viewer showcases GPU graphics + the stats bar
+await ab('eval', "(function(){var n=document.getElementById('navToggle');if(n)n.click();var t=[...document.querySelectorAll('#list li')].find(l=>/Raymarch/i.test(l.textContent));if(t)t.click();return 1;})()");
 const browser = await chromium.launch({ executablePath: '/data/data/com.termux/files/usr/bin/chromium-browser', headless: true, args: ['--no-sandbox', '--disable-gpu'] });
 const page = await browser.newPage({ viewport: { width: 832, height: 468 }, deviceScaleFactor: 2 });
 await page.goto('http://127.0.0.1:4850/');
