@@ -223,23 +223,28 @@ key.addEventListener('beforeinput', e => {
 const logInput = (() => { let last = 0; return data => { const now = Date.now(); if (now - last < 150) return; last = now; api('/api/input-log', data); }; })();
 function showCursor() { cursor.visible = true; clearTimeout(cursor.timer); cursor.timer = setTimeout(() => { cursor.visible = false; draw(); }, 2500); }
 function moveCursor(dx, dy) { cursor.x = Math.max(0, Math.min(fw - 1, cursor.x + dx)); cursor.y = Math.max(0, Math.min(fh - 1, cursor.y + dy)); showCursor(); draw(); }
+// AYN Thor pad reports as non-standard "Odin Controller"; indices from calibration (see history / input log).
+// Button 9 reads as permanently pressed (phantom) and is ignored. R2/L3/R3/Start/Select pending a second pass.
+const PAD = { A: 1, B: 2, X: 3, Y: 4, L1: 5, R1: 6, L2: 7, DU: 12, DD: 13, DL: 14, DR: 15 };
+// Start, Select, L3, R3 and R2 are intercepted by Android/AYN Game Assistant and do not reliably reach the page, so no actions use them.
+const PHANTOM = 9;
 let padTimer = null, prevButtons = [], rest = null, stillFor = 0, prevAx = null; // rest: axis values once the sticks have been still for 1s (a hat or trigger can rest at -1)
 const dead = v => Math.abs(v) < 0.2 ? 0 : v;
 const rel = (v, i) => { if (!rest) return 0; const r = rest[i] || 0; return Math.abs(r) > 0.9 ? 0 : dead(v - r); };
 function pollPads() {
   const pad = [...(navigator.getGamepads?.() || [])].find(p => p && p.connected);
   if (!pad) return;
-  const b = pad.buttons.map(x => x.pressed), ax = pad.axes.map(v => Math.round(v * 100) / 100);
+  const b = pad.buttons.map((x, i) => x.pressed && i !== PHANTOM), ax = pad.axes.map(v => Math.round(v * 100) / 100);
   if (!rest) { stillFor = prevAx && ax.every((v, i) => v === prevAx[i]) && !b.some(Boolean) ? stillFor + 1 : 0; prevAx = ax; if (stillFor >= 30) rest = ax.slice(); }
   const edge = i => b[i] && !prevButtons[i];
   const lx = rel(ax[0] || 0, 0), ly = rel(ax[1] || 0, 1), rx = rel(ax[2] || 0, 2), ry = rel(ax[3] || 0, 3);
   if (lx || ly) scrollBy(lx * 24, ly * 24);
   if (rx || ry) moveCursor(rx * 14, ry * 14);
-  if (b[12]) scrollBy(0, -40); if (b[13]) scrollBy(0, 40); if (b[14]) scrollBy(-40, 0); if (b[15]) scrollBy(40, 0);
-  if (edge(0)) { showCursor(); tapAt(Math.round(cursor.x), Math.round(cursor.y)); }
-  if (edge(1)) api('/api/nav/back');
-  if (edge(4)) scrollBy(0, -(fh - 80)); if (edge(5)) scrollBy(0, fh - 80);
-  if (edge(9)) openUrlBar(); if (edge(8)) openDrawer();
+  if (b[PAD.DU]) scrollBy(0, -40); if (b[PAD.DD]) scrollBy(0, 40); if (b[PAD.DL]) scrollBy(-40, 0); if (b[PAD.DR]) scrollBy(40, 0);
+  if (edge(PAD.A)) { showCursor(); tapAt(Math.round(cursor.x), Math.round(cursor.y)); }
+  if (edge(PAD.B)) api('/api/nav/back');
+  if (edge(PAD.L1)) scrollBy(0, -(fh - 80)); if (edge(PAD.R1)) scrollBy(0, fh - 80);
+  if (edge(PAD.Y)) openUrlBar(); if (edge(PAD.X)) openDrawer();
   const pressed = b.map((v, i) => v ? i : -1).filter(i => i >= 0);
   const moved = ax.some((v, i) => Math.abs(v - (rest?.[i] ?? 0)) > 0.2);
   if (pressed.length || moved) logInput({ type: 'gamepad', id: pad.id, mapping: pad.mapping, pressed, axes: ax.slice(0, 8), rest: rest?.slice(0, 8) });
