@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Thor Viewer</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<canvas id="screen"></canvas>
+<div id="status">connecting…</div>
+
+<div id="bar" class="hidden">
+  <span id="url">—</span>
+  <button id="kbd" title="Keyboard">⌨</button>
+  <button id="con" title="Console">console <b id="badge" class="hidden">0</b></button>
+  <button id="fs" title="Full screen">⛶</button>
+</div>
+
+<div id="console" class="hidden">
+  <div id="log"></div>
+  <button id="clear">clear</button>
+</div>
+
+<input id="key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+<script src="app.js"></script>
+</body>
+</html>
