@@ -56,3 +56,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #badge { position: absolute; top: 4px; right: 4px; min-width: 14px; height: 14px; line-height: 14px; text-align: center; background: #ff6b81; color: #000; border-radius: 7px; font: bold 10px var(--mono); }
 
 #key { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
+
+/* tab close confirmation */
+#tabList .ask { display: inline-flex; align-items: center; gap: 2px; }
+#tabList .ask .q { font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: #ff6b81; padding-right: 2px; }
+#tabList .ask .yes { color: #ff6b81; }
+#tabList li.arming { background: rgba(255, 107, 129, .08); border-left-color: #ff6b81; }

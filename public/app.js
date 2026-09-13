@@ -128,10 +128,17 @@ function renderTabs() {
     const u = document.createElement('span'); u.className = 'u'; u.textContent = t.url || '';
     body.append(title, u);
     body.onclick = async () => { await api('/api/tabs/switch', { id: t.id }); closeDrawer(); };
+    // Closing takes two taps: the × turns into "close?" with a confirm (trash) and a cancel, and reverts after 4s.
     const x = document.createElement('button'); x.className = 'ib'; x.title = 'Close tab';
     x.innerHTML = '<svg><use href="icons.svg#close"/></svg>';
-    x.onclick = e => { e.stopPropagation(); api('/api/tabs/close', { id: t.id }); };
-    li.append(body, x); list.appendChild(li);
+    const ask = document.createElement('span'); ask.className = 'ask hidden';
+    ask.innerHTML = '<span class="q">close?</span><button class="ib yes" title="Close tab"><svg><use href="icons.svg#trash-can"/></svg></button><button class="ib no" title="Keep"><svg><use href="icons.svg#close"/></svg></button>';
+    let revert;
+    const arm = on => { x.classList.toggle('hidden', on); ask.classList.toggle('hidden', !on); li.classList.toggle('arming', on); clearTimeout(revert); if (on) revert = setTimeout(() => arm(false), 4000); };
+    x.onclick = e => { e.stopPropagation(); arm(true); };
+    ask.querySelector('.yes').onclick = e => { e.stopPropagation(); arm(false); api('/api/tabs/close', { id: t.id }); };
+    ask.querySelector('.no').onclick = e => { e.stopPropagation(); arm(false); };
+    li.append(body, x, ask); list.appendChild(li);
   }
 }
 
