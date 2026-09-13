@@ -118,6 +118,21 @@ try {
   await page.setViewportSize({ width: 1000, height: 450 }); await sleep(1200);
   check('height-only resize does not change the remote page size', (await abEval(`innerWidth+'x'+innerHeight`)) === remoteBefore, `${remoteBefore}`);
 
+  // Regression: errors already in the buffer must NOT reappear when the viewer loads; new ones must still show.
+  await ab('eval', "setTimeout(function(){throw new Error('STALE-'+Date.now())},0);1"); // pre-existing error
+  await sleep(600);
+  await page.reload(); await page.waitForFunction(() => typeof frame !== 'undefined' && frame !== null, { timeout: 10000 });
+  await page.waitForFunction(() => errBaseInit === true, { timeout: 5000 });
+  await page.evaluate(() => { document.getElementById('con').click(); });
+  await sleep(800);
+  const staleShown = await page.evaluate(() => [...document.querySelectorAll('#log div.error')].some(l => l.textContent.includes('STALE-')));
+  check('stale errors do not reappear on load', !staleShown);
+  const marker = 'LIVE-' + Date.now();
+  await ab('eval', "setTimeout(function(){throw new Error('" + marker + "')},0);1");
+  await page.evaluate(() => pollErrors()); await sleep(400); await page.evaluate(() => pollErrors()); await sleep(400);
+  const liveShown = await page.evaluate(m => [...document.querySelectorAll('#log div.error')].some(l => l.textContent.includes(m)), marker);
+  check('new errors after load still show', liveShown);
+
   check('no JavaScript errors in the viewer page', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 } catch (e) {
   check('test run completed', false, String(e).slice(0, 200));

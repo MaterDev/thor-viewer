@@ -13,6 +13,17 @@ const cursor = { x: 640, y: 360, visible: false, timer: null }; // controller po
 const api = (path, body) => fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' }).catch(() => {});
 
 // ---------- visited-page history (built from stream url events; per device) ----------
+let errSeen = 0;            // entries of the (append-only) error buffer we've already handled
+let errBaseInit = false;   // becomes true once the pre-existing junk has been baselined out
+let lastNavBase = null;
+function clearConsoleOnNav(url) {
+  if (!url) return;
+  const base = url.split('#')[0];
+  if (lastNavBase !== null && base !== lastNavBase) {  // real navigation, not a #hash change
+    logEl.textContent = ''; errors = 0; badge.classList.add('hidden'); // fresh console per page; errSeen keeps advancing so new-page errors show
+  }
+  lastNavBase = base;
+}
 let history = [];
 try { history = JSON.parse(localStorage.getItem('thorHistory') || '[]'); } catch {}
 let urlEdited = false;
@@ -113,11 +124,11 @@ function connect() {
       }).catch(() => send({ type: 'ack', seq: m.seq }));
     } else if (m.type === 'url') {
       if (document.activeElement !== urlEl) urlEl.value = m.url;
-      addHistory(m.url);
+      clearConsoleOnNav(m.url); addHistory(m.url);
     } else if (m.type === 'tabs' && Array.isArray(m.tabs)) {
       setTabs(m.tabs.map(t => ({ id: t.tabId, title: t.title, url: t.url, active: !!t.active })));
       const active = m.tabs.find(t => t.active) || m.tabs[0];
-      if (active?.url) { if (document.activeElement !== urlEl) urlEl.value = active.url; addHistory(active.url); }
+      if (active?.url) { if (document.activeElement !== urlEl) urlEl.value = active.url; clearConsoleOnNav(active.url); addHistory(active.url); }
     } else if (m.type === 'console') {
       addLog(m.level, m.text);
     } else if (m.type === 'status' && m.viewportWidth) {
@@ -217,9 +228,20 @@ function addLog(level, text) {
   logEl.scrollTop = logEl.scrollHeight;
   if (level === 'error' && consoleEl.classList.contains('hidden')) { errors++; badge.textContent = errors; badge.classList.remove('hidden'); }
 }
-const seenErrors = new Set();                                 // uncaught page errors are not on the stream; poll the server
+// Uncaught page errors are not on the stream; poll the server. The buffer is append-only
+// (can't be cleared via the CLI in this version), so show only entries past what we've seen.
 async function pollErrors() {
-  try { for (const e of await (await fetch('/api/errors')).json()) if (!seenErrors.has(e.text)) { seenErrors.add(e.text); addLog('error', e.text); } } catch {}
+  if (!errBaseInit) return;                             // don't surface anything until the baseline is set
+  try {
+    const list = await (await fetch('/api/errors')).json();
+    if (list.length < errSeen) errSeen = 0;            // session restarted -> buffer shrank
+    for (let i = errSeen; i < list.length; i++) addLog('error', list[i].text);
+    errSeen = list.length;
+  } catch {}
+}
+async function initErrorBaseline() {                    // skip errors already in the buffer when the viewer connects
+  try { errSeen = (await (await fetch('/api/errors')).json()).length; } catch { errSeen = 0; }
+  errBaseInit = true;
 }
 setInterval(pollErrors, 20000);
 $('con').onclick = () => { consoleEl.classList.toggle('hidden'); errors = 0; badge.classList.add('hidden'); closeDrawer(); if (!consoleEl.classList.contains('hidden')) pollErrors(); };
@@ -372,4 +394,4 @@ $('fpsToggle').onclick = () => { showFps = !showFps; try { localStorage.setItem(
 applyFps(); $('fpsToggle').classList.toggle('on', showFps);
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-layout(); syncViewport(); connect();
+layout(); syncViewport(); connect(); initErrorBaseline();
