@@ -160,11 +160,12 @@ document.addEventListener('fullscreenchange', () => { updateFs(); sentSize = '';
 updateFs();
 
 // ---------- console ----------
-let lastLog = { key: '', t: 0 };
+const recentLogs = new Map();                                 // the stream can deliver one event twice (seen ~6ms apart), and duplicates can interleave
 function addLog(level, text) {
-  const k = level + '|' + text, now = Date.now();           // the stream can deliver one event twice
-  if (k === lastLog.key && now - lastLog.t < 500) return;
-  lastLog = { key: k, t: now };
+  const k = level + '|' + text, now = Date.now();
+  for (const [key, t] of recentLogs) if (now - t > 1500) recentLogs.delete(key);
+  if (recentLogs.has(k) && now - recentLogs.get(k) < 1500) { recentLogs.set(k, now); return; }
+  recentLogs.set(k, now);
   const line = document.createElement('div'); line.className = level || 'log';
   line.textContent = `${new Date().toLocaleTimeString([], { hour12: false })}  ${level}  ${text}`;
   logEl.appendChild(line);

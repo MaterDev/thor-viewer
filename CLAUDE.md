@@ -1,35 +1,30 @@
 # Thor Viewer
 
-Full-screen live view of Claude's browser (the agent-browser `thor` session) for the top screen. Shows only the page picture at the viewer's own size and shape, forwards taps, drags, scrolling and typing, and has a self-hiding bar with the page URL and a console drawer.
+Full-screen live view of Claude's browser (the agent-browser `thor` session) for the Thor's top screen. See README.md for what it is; this file is for working on it.
 
-## Run
-
-```
-node server.mjs
-```
-
-Prints and serves:
+## Run and test
 
 ```
-http://127.0.0.1:4850/
+node server.mjs      # http://127.0.0.1:4850/  (fixed port; don't change)
+npm test             # 23-check end-to-end smoke test; needs the viewer and agent-browser running
+npm run build:icons  # regenerate public/icons.svg from @carbon/icons after editing tools/build-icons.mjs
+node --import /home/key/.local/share/playwright-mcp/platform-linux.mjs tools/screenshots.mjs   # README images
 ```
 
-Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts agent-browser and its dashboard. Port 4850 is fixed; don't change it.
+Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts agent-browser and its dashboard and prints the URL. Everything dies when the Claude Code process ends; rerun the script.
 
 ## How it works
 
-- `server.mjs` (Termux node, no dependencies): static files from `public/`, plus `GET /api/errors` (runs `agent-browser errors --json`, because uncaught page errors are not on the live stream) and `POST /api/viewport {w,h}` (runs `agent-browser set viewport`).
-- `public/app.js`: connects to agent-browser's stream at `ws://127.0.0.1:9223/` (port pinned by the `agent-browser` wrapper), draws JPEG frames on a canvas, acks each frame (ack pacing, 15 fps cap), and injects input. On load, resize, rotation and fullscreen it POSTs its own CSS-pixel size to `/api/viewport`, so the remote browser takes the exact shape of the screen and frames draw 1:1 (letterboxing only during the brief mismatch).
-  - Tap → mouse press/release at the frame coordinate. One-finger drag → mouse wheel (scrolls the remote page). Tap within 24px of the top edge shows the bar.
-  - The ⌨ button focuses a hidden input so Android shows the keyboard; `beforeinput` events are forwarded as `char` keystrokes, Backspace and Enter as keys.
-  - Console drawer: `console` messages from the stream (deduplicated; the stream can deliver one event twice) plus polled page errors. Red badge counts errors while the drawer is closed.
-- `manifest.webmanifest` + `sw.js` + PNG icons make it installable: Chrome's "Add to Home screen" opens it full screen with no browser UI. A corner ⛶ button requests fullscreen; it hides when already fullscreen or when running as an installed app (`display-mode` media query).
+- `server.mjs` (Termux node, no runtime dependencies): static files from `public/`, plus a small API where each route is one agent-browser CLI call: `POST /api/viewport`, `POST /api/nav/{back,forward,reload}`, `POST /api/nav/open {url}`, `GET /api/tabs`, `POST /api/tabs/{new,switch,close}`, `GET /api/errors`, `POST /api/input-log`.
+- `public/app.js`: connects to agent-browser's stream (`ws://127.0.0.1:9223/`, ack pacing, 15 fps cap), draws frames on a full-window canvas, injects mouse/keyboard input, and renders the overlays: tabs drawer (left, from the stream's `tabs` messages), address bar (right), console panel, full-screen toggle, controller pointer.
+- `public/app.css`: dark glass panels, cyan hairlines, Carbon icons via `<use href="icons.svg#name">`. Icon names are the Carbon 32px file names (`arrow--left`, `trash-can`, ...).
+- `manifest.webmanifest` + `sw.js` + PNG icons (rendered from `icon.svg` with headless Chromium) make it installable from Chrome's "Add to Home screen".
 
-## Testing
+## Rules learned the hard way
 
-Serve any page, `agent-browser open` it, load the viewer with the Playwright MCP tools, dispatch `mousedown`/`mouseup` on `#screen` (frame coords + letterbox offset), then verify with `agent-browser get text`. Icons regenerate with headless Chromium screenshots of `icon.svg` (see history in `~/.claude/skills/thor-environment/history.md`).
-
-## Gotchas
-
-- Never keep a second copy of the viewer open (e.g. in the Playwright MCP browser) while the user is using theirs: each copy sets the remote viewport to its own size, and the page visibly re-lays out ("zooms out and back") on every switch. The viewer only sends its size when visible and focused, and the server refuses `/api/viewport` from a HeadlessChrome user agent, so Playwright MCP test copies cannot resize the shared session. Still close test copies promptly. Height-only resizes (Android toolbar, keyboard) are ignored; width changes, rotation and fullscreen changes resync. Every size change is logged with its user agent in the input log.
-- The Thor's controller shows up in Chrome as "Odin Controller (Vendor: 2020 Product: 0111)" with `mapping: ""` (non-standard). One axis rests at -1, so axes are read relative to their resting values. Button indices come from `/home/key/.cache/thor-viewer-input.log`, which the viewer appends to on every press.
+- **One viewer sets the page size.** The viewer POSTs its size to `/api/viewport` on load, width change, rotation and full-screen change, only when visible and focused. Height-only resizes (Android toolbar, keyboard) are ignored. The server refuses size changes from `HeadlessChrome` user agents so Playwright MCP test copies can't resize the session the user is watching. Two live viewers with different sizes make the page "zoom out and back"; every size change is logged with its user agent in `~/.cache/thor-viewer-input.log`.
+- **Tabs come from the stream, not from polling.** The stream sends the full tab list ~9 times a second; re-fetching on each message flickered. `setTabs()` redraws only when the list changes. Closing a tab is two taps (× then trash) and reverts after 4s.
+- **Console:** stream `console` events can arrive twice; `addLog` dedupes identical lines within a short window. Uncaught exceptions are not on the stream; `/api/errors` is polled while the panel is open and every 20s for the badge.
+- **agent-browser quirks:** refs (`@e2`) exist only after `snapshot`; `eval` output is a JSON-quoted string (parse twice); plain `errors` prints nothing useful, use `--json`.
+- **Controller:** shows up as "Odin Controller (Vendor: 2020 Product: 0111)", `mapping: ""`; axes 0/1 are the left stick. Axis rest values are sampled after 1s of stillness. Button indices are still a guess; presses are logged to the input log for mapping.
+- **Testing by hand:** load the viewer with the Playwright MCP tools, dispatch `mousedown`/`mouseup` on `#screen` at `view.x + x*view.scale`, verify with `agent-browser get text`, and close the test page promptly. `pkill -f` kills the Bash tool's own shell; kill by PID.

@@ -70,6 +70,12 @@ try {
   const logLines = await page.evaluate(() => [...document.querySelectorAll('#log div')].filter(l => l.textContent.includes('greeted Thor')).length);
   check('console messages are not duplicated', logLines === 1, `${logLines} line(s)`);
 
+  // Interleaved duplicates: the stream sends log,warn,log,warn; each must appear once (regression: dedup only compared the previous line)
+  await ab('eval', "console.log('il-a');console.warn('il-b');1");
+  await sleep(1200);
+  const il = await page.evaluate(() => ['il-a','il-b'].map(s => [...document.querySelectorAll('#log div')].filter(l => l.textContent.includes(s)).length));
+  check('interleaved console duplicates are collapsed', il[0] === 1 && il[1] === 1, `a:${il[0]} b:${il[1]}`);
+
   await tap('x'); await sleep(300);
   await page.evaluate(() => { document.getElementById('tabsBtn').click(); document.getElementById('con').click(); });
   check('uncaught page error shows in the console panel', !!(await until(() => page.evaluate(() => [...document.querySelectorAll('#log div.error')].some(l => l.textContent.includes('undefinedFn'))), 8000)));
