@@ -12,15 +12,18 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<canvas id="screen"></canvas>
-<div id="status">connecting…</div>
-<button id="fsbtn" title="Full screen">⛶</button>
-
-<div id="bar" class="hidden">
-  <span id="url">—</span>
+<div id="bar">
+  <button id="back" title="Back">‹</button>
+  <form id="urlform"><input id="url" type="url" inputmode="url" placeholder="Enter address or search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></form>
   <button id="kbd" title="Keyboard">⌨</button>
   <button id="con" title="Console">console <b id="badge" class="hidden">0</b></button>
   <button id="fs">full screen</button>
+  <button id="hide" title="Hide bar">▴</button>
+</div>
+<div id="stage">
+  <canvas id="screen"></canvas>
+  <div id="status">connecting…</div>
+  <button id="fsbtn" title="Full screen">⛶</button>
 </div>
 
 <div id="console" class="hidden">
