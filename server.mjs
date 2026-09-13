@@ -46,8 +46,38 @@ function pageErrors() {
   });
 }
 
+
+// Device temperature from /sys (the browser can't read it). Battery temp is deci-degC (÷10); thermal
+// zones are milli-degC (÷1000). SoC = hottest cpu/gpu/aoss zone (reflects load), returned for later use.
+let HOT_ZONE_PATHS = null;
+async function hotZonePaths() {
+  if (HOT_ZONE_PATHS) return HOT_ZONE_PATHS;
+  HOT_ZONE_PATHS = [];
+  for (let i = 0; i < 60; i++) {
+    try {
+      const type = (await readFile(`/sys/class/thermal/thermal_zone${i}/type`, 'utf8')).trim();
+      if (/^(cpu|gpu|aoss)/.test(type)) HOT_ZONE_PATHS.push(`/sys/class/thermal/thermal_zone${i}/temp`);
+    } catch { /* zone gap or unreadable — skip */ }
+  }
+  return HOT_ZONE_PATHS;
+}
+async function readTemp() {
+  let battery = null, soc = null;
+  try { const v = parseInt(await readFile('/sys/class/power_supply/battery/temp', 'utf8'), 10); if (Number.isFinite(v)) battery = Math.round(v) / 10; } catch {}
+  try {
+    let max = 0;
+    for (const path of await hotZonePaths()) { try { const v = parseInt(await readFile(path, 'utf8'), 10); if (Number.isFinite(v) && v > max) max = v; } catch {} }
+    if (max > 0) soc = Math.round(max / 100) / 10;
+  } catch {}
+  return { battery, soc };
+}
+
 createServer(async (req, res) => {
   let path = new URL(req.url, 'http://x').pathname;
+  if (path === '/api/temp') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+    return res.end(JSON.stringify(await readTemp()));
+  }
   if (path === '/api/errors') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
     return res.end(JSON.stringify(await pageErrors()));

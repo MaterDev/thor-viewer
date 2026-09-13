@@ -58,6 +58,8 @@ try {
   const stats = await page.evaluate(() => { const el = document.getElementById('stats'); if (!el) return null; const cs = getComputedStyle(el); const r = el.getBoundingClientRect(); const tabs = document.getElementById('tabsBtn').getBoundingClientRect(); const url = document.getElementById('urlBtn').getBoundingClientRect(); return { visible: cs.display !== 'none', pe: cs.pointerEvents, translucent: parseFloat(cs.opacity) < 1, thin: r.height <= 28, gap: r.left > tabs.right && r.right < url.left, hasFps: /fps/.test(el.textContent) }; });
   check('stats bar visible, thin, translucent, click-through', !!stats && stats.visible && stats.thin && stats.translucent && stats.pe === 'none', JSON.stringify(stats));
   check('stats bar centered between the corner buttons and shows fps', !!stats && stats.gap && stats.hasFps, JSON.stringify(stats));
+  const temp = await (await fetch(`${VIEWER}api/temp`).catch(()=>({json:async()=>({})}))).json();
+  check('/api/temp returns a numeric battery temperature', typeof temp.battery === 'number' && temp.battery > 0 && temp.battery < 100, JSON.stringify(temp));
 
   // Remote page geometry -> viewer canvas coordinates
   const rects = await abEval(`JSON.stringify(Object.fromEntries(['t','n','g','x','tap'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [id, { x: r.x + r.width / 2, y: r.y + r.height / 2 }]; })))`);

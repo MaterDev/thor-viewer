@@ -393,13 +393,28 @@ function statTick(nbytes) {
     const fps = Math.round(statCount * 1000 / dt);
     const mbps = (statBytes * 8 / 1e6) / (dt / 1000);
     const el = $('stats');
-    if (el) el.innerHTML = `<span class="v">${fps}</span> fps<span class="sep"> · </span>${fw}×${fh}<span class="sep"> · </span><span class="v">${mbps.toFixed(1)}</span> Mb/s`;
+    if (el) el.innerHTML = `<span class="v">${fps}</span> fps<span class="sep"> · </span>${fw}×${fh}<span class="sep"> · </span><span class="v">${mbps.toFixed(1)}</span> Mb/s${tempHtml()}`;
     statCount = 0; statBytes = 0; statLast = now;
   }
 }
 function applyStats() { const el = $('stats'); if (el) el.classList.toggle('hidden', !showStats); const b = $('statsToggle'); if (b) { b.textContent = showStats ? 'Hide stats bar' : 'Show stats bar'; b.classList.toggle('on', showStats); } }
 $('statsToggle').onclick = () => { showStats = !showStats; try { localStorage.setItem('thorStats', showStats ? '1' : '0'); } catch {} applyStats(); };
 applyStats();
+// Device temperature (battery) via the server's /api/temp (the page can't read /sys). Colour it as it
+// climbs so thermal stress during heavy GPU work is visible at a glance. soc is fetched too (unused in
+// the bar for now — battery is "the device temperature").
+let lastTemp = { battery: null, soc: null };
+function tempHtml() {
+  const t = lastTemp.battery;
+  if (t == null) return '';
+  const colour = t >= 44 ? '#ff6b81' : t >= 40 ? '#f2a541' : 'var(--accent)';
+  return `<span class="sep"> · </span><span class="v" style="color:${colour}">${t.toFixed(1)}°C</span>`;
+}
+async function pollTemp() {
+  if (!showStats) return;
+  try { const r = await fetch('/api/temp', { cache: 'no-store' }); if (r.ok) lastTemp = await r.json(); } catch {}
+}
+pollTemp(); setInterval(pollTemp, 5000);
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout(); syncViewport(); connect(); initErrorBaseline();
