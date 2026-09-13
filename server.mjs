@@ -28,6 +28,12 @@ function setViewport(w, h) {
 
 const INPUT_LOG = '/home/key/.cache/thor-viewer-input.log';
 const NAV = { back: ['back'], forward: ['forward'], reload: ['reload'] };
+const TAB_REF = /^(t\d+|[A-F0-9]{32})$/;
+function agentBrowserJson(args) {
+  return new Promise(resolve => execFile(AGENT_BROWSER, [...args, '--json'], { timeout: 15000 }, (err, stdout) => {
+    try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
+  }));
+}
 function runAgentBrowser(args) {
   return new Promise(resolve => execFile(AGENT_BROWSER, args, { timeout: 15000 }, err => resolve(!err)));
 }
@@ -57,6 +63,21 @@ createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     appendFile(INPUT_LOG, new Date().toISOString() + ' ' + body.slice(0, 2000) + '\n').catch(() => {});
     res.writeHead(204); return res.end();
+  }
+  if (path === '/api/tabs' && req.method === 'GET') {
+    const out = await agentBrowserJson(['tab', 'list']);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+    return res.end(JSON.stringify((out?.data?.tabs ?? []).map(t => ({ id: t.tabId, targetId: t.targetId, title: t.title, url: t.url, active: !!t.active }))));
+  }
+  if (path.startsWith('/api/tabs/') && req.method === 'POST') {
+    let body = ''; for await (const chunk of req) body += chunk;
+    let p = {}; try { p = JSON.parse(body || '{}'); } catch {}
+    const op = path.slice(10); let ok = false;
+    if (op === 'new') ok = await runAgentBrowser(['tab', 'new', ...(/^https?:\/\/\S+$/.test(p.url || '') ? [p.url] : [])]);
+    else if (op === 'switch' && TAB_REF.test(p.id || '')) ok = await runAgentBrowser(['tab', p.id]);
+    else if (op === 'close' && TAB_REF.test(p.id || '')) ok = await runAgentBrowser(['tab', 'close', p.id]);
+    res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok }));
   }
   if (path === '/api/nav/open' && req.method === 'POST') {
     let body = ''; for await (const chunk of req) body += chunk;

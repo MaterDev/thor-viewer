@@ -1,68 +1,61 @@
 // Thor Viewer: full-screen live view of the agent-browser "thor" session.
-// Connects straight to agent-browser's stream (JPEG frames + input injection).
+// Connects straight to agent-browser's stream (JPEG frames + input injection);
+// tabs, navigation and page errors go through the small server API.
 const STREAM = 'ws://127.0.0.1:9223/?pacing=ack&maxFps=15';
+const $ = id => document.getElementById(id);
+const canvas = $('screen'), ctx = canvas.getContext('2d');
+const status = $('status'), urlEl = $('url'), urlwrap = $('urlwrap'), drawer = $('drawer'), scrim = $('scrim');
+const consoleEl = $('console'), logEl = $('log'), badge = $('badge'), key = $('key');
 
-const canvas = document.getElementById('screen');
-const ctx = canvas.getContext('2d');
-const status = document.getElementById('status');
-const bar = document.getElementById('bar');
-const urlEl = document.getElementById('url');
-const consoleEl = document.getElementById('console');
-const logEl = document.getElementById('log');
-const badge = document.getElementById('badge');
-const key = document.getElementById('key');
-
-let ws, frame = null, fw = 1280, fh = 720, errors = 0, hideTimer;
-let view = { scale: 1, x: 0, y: 0 }; // where the frame is drawn on the canvas (CSS px)
-const cursor = { x: 640, y: 360, visible: false, timer: null }; // controller-driven pointer, in frame coords
+let ws, frame = null, fw = 1280, fh = 720, errors = 0;
+let view = { scale: 1, x: 0, y: 0 };                       // where the frame is drawn (CSS px)
+const cursor = { x: 640, y: 360, visible: false, timer: null }; // controller pointer, frame coords
+const api = (path, body) => fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' }).catch(() => {});
 
 // ---------- drawing ----------
 function layout() {
-  const dpr = devicePixelRatio || 1;
-  const W = canvas.clientWidth, H = canvas.clientHeight;
-  canvas.width = W * dpr; canvas.height = H * dpr;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const dpr = devicePixelRatio || 1, W = innerWidth, H = innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const scale = Math.min(W / fw, H / fh);
   view = { scale, x: (W - fw * scale) / 2, y: (H - fh * scale) / 2 };
   draw();
 }
 function draw() {
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  ctx.fillStyle = '#05080c'; ctx.fillRect(0, 0, innerWidth, innerHeight);
   if (frame) ctx.drawImage(frame, view.x, view.y, fw * view.scale, fh * view.scale);
   if (cursor.visible) {
-    ctx.beginPath(); ctx.arc(view.x + cursor.x * view.scale, view.y + cursor.y * view.scale, 9, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,80,80,.55)'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+    const x = view.x + cursor.x * view.scale, y = view.y + cursor.y * view.scale;
+    ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.strokeStyle = '#5ee0ff'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = '#5ee0ff'; ctx.fill();
   }
 }
 addEventListener('resize', () => { layout(); syncViewport(); });
 
-// Make the remote browser the same size as this view, so pages reflow to the real screen shape.
+// ---------- viewport sync: the remote browser takes this screen's exact size ----------
 let sentSize = '', sizeTimer, lastResync = 0;
+const inFront = () => document.visibilityState === 'visible' && document.hasFocus(); // only the viewer in front sets the size
+function syncViewport() {
+  clearTimeout(sizeTimer);
+  sizeTimer = setTimeout(() => {
+    if (!inFront()) return;
+    const w = Math.round(innerWidth), h = Math.round(innerHeight), k = w + 'x' + h;
+    if (k === sentSize) return;
+    sentSize = k; api('/api/viewport', { w, h });
+  }, 300);
+}
 function resyncIfMismatch() {
-  if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
-  if (fw === Math.round(canvas.clientWidth) && fh === Math.round(canvas.clientHeight)) return;
-  if (Date.now() - lastResync < 3000) return;
+  if (!inFront() || (fw === Math.round(innerWidth) && fh === Math.round(innerHeight)) || Date.now() - lastResync < 3000) return;
   lastResync = Date.now(); sentSize = ''; syncViewport();
 }
 document.addEventListener('visibilitychange', () => { sentSize = ''; syncViewport(); });
 addEventListener('focus', () => { sentSize = ''; syncViewport(); });
-function syncViewport() {
-  clearTimeout(sizeTimer);
-  sizeTimer = setTimeout(async () => {
-    if (document.visibilityState !== 'visible' || !document.hasFocus()) return; // only the viewer in front sets the browser size
-    const w = Math.round(canvas.clientWidth), h = Math.round(canvas.clientHeight), k = w + 'x' + h;
-    if (k === sentSize) return;
-    sentSize = k;
-    try { await fetch('/api/viewport', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ w, h }) }); } catch {}
-  }, 300);
-}
 
 // ---------- stream ----------
 function connect() {
-  status.textContent = 'connecting to browser…'; status.classList.remove('hidden');
+  status.textContent = 'connecting to browser'; status.classList.remove('hidden');
   ws = new WebSocket(STREAM);
-  ws.onopen = () => { status.textContent = 'waiting for first frame…'; };
-  ws.onclose = () => { status.textContent = 'browser stream closed. Ask Claude to run the agent-browser start script. Retrying…'; status.classList.remove('hidden'); setTimeout(connect, 2000); };
+  ws.onopen = () => { status.textContent = 'waiting for first frame'; };
+  ws.onclose = () => { status.textContent = 'browser stream closed · ask Claude to run the start script · retrying'; status.classList.remove('hidden'); setTimeout(connect, 2000); };
   ws.onerror = () => ws.close();
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
@@ -70,17 +63,17 @@ function connect() {
       const img = new Image();
       img.onload = () => {
         frame = img;
-        if (m.metadata.deviceWidth !== fw || m.metadata.deviceHeight !== fh) { fw = m.metadata.deviceWidth; fh = m.metadata.deviceHeight; layout(); }
-        else draw();
-        resyncIfMismatch();
+        if (m.metadata.deviceWidth !== fw || m.metadata.deviceHeight !== fh) { fw = m.metadata.deviceWidth; fh = m.metadata.deviceHeight; layout(); } else draw();
         status.classList.add('hidden');
         send({ type: 'ack', seq: m.seq });
+        resyncIfMismatch();
       };
       img.src = 'data:image/jpeg;base64,' + m.data;
     } else if (m.type === 'url') {
       if (document.activeElement !== urlEl) urlEl.value = m.url;
-    } else if (m.type === 'tabs' && Array.isArray(m.tabs)) {
-      const active = m.tabs.find(t => t.active) || m.tabs[0];
+    } else if (m.type === 'tabs') {
+      if (drawer.classList.contains('open')) loadTabs();
+      const active = Array.isArray(m.tabs) && (m.tabs.find(t => t.active) || m.tabs[0]);
       if (active?.url && document.activeElement !== urlEl) urlEl.value = active.url;
     } else if (m.type === 'console') {
       addLog(m.level, m.text);
@@ -91,135 +84,129 @@ function connect() {
 }
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
-// ---------- console drawer ----------
-let lastLog = { key: '', t: 0 };
-function addLog(level, text) {
-  const k = level + '|' + text, now = Date.now(); // the stream can deliver the same event twice
-  if (k === lastLog.key && now - lastLog.t < 500) return;
-  lastLog = { key: k, t: now };
-  const line = document.createElement('div');
-  line.className = level || 'log';
-  line.textContent = `[${new Date().toLocaleTimeString([], { hour12: false })}] ${level}: ${text}`;
-  logEl.appendChild(line);
-  while (logEl.children.length > 300) logEl.firstChild.remove();
-  logEl.scrollTop = logEl.scrollHeight;
-  if (level === 'error') { errors++; badge.textContent = errors; badge.classList.remove('hidden'); }
-}
-// Uncaught page errors are not on the stream; ask the server for them while the drawer is open, and every 20s otherwise for the badge.
-const seenErrors = new Set();
-async function pollErrors() {
-  try {
-    const list = await (await fetch('/api/errors')).json();
-    for (const e of list) { const k = e.text; if (!seenErrors.has(k)) { seenErrors.add(k); addLog('error', e.text); } }
-  } catch {}
-}
-setInterval(pollErrors, 20000);
-document.getElementById('con').onclick = () => { consoleEl.classList.toggle('hidden'); errors = 0; badge.classList.add('hidden'); keepBar(); if (!consoleEl.classList.contains('hidden')) pollErrors(); };
-document.getElementById('clear').onclick = () => { logEl.textContent = ''; errors = 0; badge.classList.add('hidden'); };
-
-// ---------- bar: persistent address bar. ▴ collapses it; a tap at the top edge of the picture brings it back ----------
-function showBar() { bar.classList.remove('hidden'); layout(); syncViewport(); }
-function keepBar() {}
-document.getElementById('hide').onclick = () => { bar.classList.add('hidden'); layout(); syncViewport(); };
-document.getElementById('back').onclick = () => nav('back');
-document.getElementById('urlform').onsubmit = e => {
+// ---------- address bar (top right, expands leftwards) ----------
+const openUrlBar = () => { urlwrap.classList.add('open'); urlEl.focus(); urlEl.select(); };
+const closeUrlBar = () => { urlwrap.classList.remove('open'); urlEl.blur(); };
+$('urlBtn').onclick = openUrlBar;
+$('urlClose').onclick = closeUrlBar;
+$('back').onclick = () => api('/api/nav/back');
+$('forward').onclick = () => api('/api/nav/forward');
+$('urlbar').onsubmit = e => {
   e.preventDefault();
   const v = urlEl.value.trim(); if (!v) return;
   let url;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) url = v;                       // full URL
-  else if (/^[^\s]+\.[^\s]+$/.test(v)) url = 'https://' + v;            // bare domain or path
-  else url = 'https://duckduckgo.com/?q=' + encodeURIComponent(v);      // search terms
-  urlEl.blur();
-  fetch('/api/nav/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) }).catch(() => {});
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) url = v;                        // full URL
+  else if (/^[^\s]+\.[^\s]+$/.test(v)) url = 'https://' + v;             // bare domain or path
+  else url = 'https://duckduckgo.com/?q=' + encodeURIComponent(v);       // search terms
+  closeUrlBar(); api('/api/nav/open', { url });
 };
-const toggleFullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
-const fsBar = document.getElementById('fs'), fsbtn = document.getElementById('fsbtn');
-fsBar.onclick = () => { toggleFullscreen(); keepBar(); };
-fsbtn.onclick = toggleFullscreen;
-function updateFsButton() {
-  const app = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
-  const full = !!document.fullscreenElement;
-  fsBar.textContent = full ? 'exit full screen' : 'full screen';
-  fsbtn.textContent = full ? '⤡' : '⛶';
-  fsbtn.title = full ? 'Exit full screen' : 'Full screen';
-  fsbtn.classList.toggle('dim', full);
-  fsbtn.classList.toggle('hidden', app || !document.fullscreenEnabled);
-}
-document.addEventListener('fullscreenchange', () => { updateFsButton(); syncViewport(); });
-updateFsButton();
-document.getElementById('kbd').onclick = () => { key.focus(); keepBar(); };
 
-// ---------- input: touch → mouse on the remote page ----------
-function toPage(t) { const r = canvas.getBoundingClientRect(); return { x: Math.round((t.clientX - r.left - view.x) / view.scale), y: Math.round((t.clientY - r.top - view.y) / view.scale) }; }
-let touch = null; // {start, last, moved, startTime}
+// ---------- tabs drawer (top left) ----------
+const openDrawer = () => { drawer.classList.add('open'); scrim.classList.remove('hidden'); loadTabs(); };
+const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
+$('tabsBtn').onclick = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
+scrim.onclick = closeDrawer;
+$('tabNew').onclick = async () => { await api('/api/tabs/new', {}); loadTabs(); };
+async function loadTabs() {
+  let tabs = [];
+  try { tabs = await (await fetch('/api/tabs')).json(); } catch {}
+  const list = $('tabList'); list.textContent = '';
+  if (!tabs.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'no tabs'; list.appendChild(li); return; }
+  for (const t of tabs) {
+    const li = document.createElement('li'); if (t.active) li.classList.add('active');
+    const body = document.createElement('div'); body.className = 't';
+    const title = document.createElement('span'); title.className = 'title'; title.textContent = t.title || t.url || t.id;
+    const u = document.createElement('span'); u.className = 'u'; u.textContent = t.url || '';
+    body.append(title, u);
+    body.onclick = async () => { await api('/api/tabs/switch', { id: t.id }); closeDrawer(); };
+    const x = document.createElement('button'); x.className = 'ib'; x.title = 'Close tab';
+    x.innerHTML = '<svg><use href="icons.svg#close"/></svg>';
+    x.onclick = async e => { e.stopPropagation(); await api('/api/tabs/close', { id: t.id }); loadTabs(); };
+    li.append(body, x); list.appendChild(li);
+  }
+}
+
+// ---------- tools (drawer footer) ----------
+$('reload').onclick = () => { api('/api/nav/reload'); closeDrawer(); };
+$('kbd').onclick = () => { closeDrawer(); key.focus(); };
+const toggleFullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
+$('fs').onclick = () => { toggleFullscreen(); closeDrawer(); };
+function updateFs() {
+  const full = !!document.fullscreenElement;
+  $('fsIcon').setAttribute('href', 'icons.svg#' + (full ? 'minimize' : 'maximize'));
+  $('fs').title = full ? 'Exit full screen' : 'Full screen';
+  const app = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
+  $('fs').classList.toggle('hidden', app || !document.fullscreenEnabled);
+}
+document.addEventListener('fullscreenchange', () => { updateFs(); syncViewport(); });
+updateFs();
+
+// ---------- console ----------
+let lastLog = { key: '', t: 0 };
+function addLog(level, text) {
+  const k = level + '|' + text, now = Date.now();           // the stream can deliver one event twice
+  if (k === lastLog.key && now - lastLog.t < 500) return;
+  lastLog = { key: k, t: now };
+  const line = document.createElement('div'); line.className = level || 'log';
+  line.textContent = `${new Date().toLocaleTimeString([], { hour12: false })}  ${level}  ${text}`;
+  logEl.appendChild(line);
+  while (logEl.children.length > 300) logEl.firstChild.remove();
+  logEl.scrollTop = logEl.scrollHeight;
+  if (level === 'error' && consoleEl.classList.contains('hidden')) { errors++; badge.textContent = errors; badge.classList.remove('hidden'); }
+}
+const seenErrors = new Set();                                 // uncaught page errors are not on the stream; poll the server
+async function pollErrors() {
+  try { for (const e of await (await fetch('/api/errors')).json()) if (!seenErrors.has(e.text)) { seenErrors.add(e.text); addLog('error', e.text); } } catch {}
+}
+setInterval(pollErrors, 20000);
+$('con').onclick = () => { consoleEl.classList.toggle('hidden'); errors = 0; badge.classList.add('hidden'); closeDrawer(); if (!consoleEl.classList.contains('hidden')) pollErrors(); };
+$('clear').onclick = () => { logEl.textContent = ''; consoleEl.classList.add('hidden'); };
+
+// ---------- touch and mouse on the picture ----------
+function toPage(t) { return { x: Math.round((t.clientX - view.x) / view.scale), y: Math.round((t.clientY - view.y) / view.scale) }; }
+function tapAt(x, y) {
+  send({ type: 'input_mouse', eventType: 'mouseMoved', x, y });
+  send({ type: 'input_mouse', eventType: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  send({ type: 'input_mouse', eventType: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+}
+function scrollBy(dx, dy, at) { const p = at || cursor; send({ type: 'input_mouse', eventType: 'mouseWheel', x: Math.round(p.x), y: Math.round(p.y), deltaX: dx, deltaY: dy }); }
+let touch = null;
 canvas.addEventListener('touchstart', e => {
   if (e.touches.length !== 1) { touch = null; return; }
-  const p = toPage(e.touches[0]);
-  touch = { start: p, last: p, moved: false, t: Date.now(), tip: e.touches[0].clientY - canvas.getBoundingClientRect().top < 24 };
-  e.preventDefault();
+  const p = toPage(e.touches[0]); touch = { start: p, last: p, moved: false }; e.preventDefault();
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   if (!touch || e.touches.length !== 1) return;
   const p = toPage(e.touches[0]);
   if (Math.abs(p.x - touch.start.x) + Math.abs(p.y - touch.start.y) > 8) touch.moved = true;
-  if (touch.moved) { // one-finger drag scrolls the remote page
-    send({ type: 'input_mouse', eventType: 'mouseWheel', x: touch.start.x, y: touch.start.y, deltaX: touch.last.x - p.x, deltaY: touch.last.y - p.y });
-    touch.last = p;
-  }
+  if (touch.moved) { scrollBy(touch.last.x - p.x, touch.last.y - p.y, touch.start); touch.last = p; }
   e.preventDefault();
 }, { passive: false });
-canvas.addEventListener('touchend', e => {
-  if (!touch) return;
-  if (!touch.moved) {
-    if (touch.tip) showBar();
-    const { x, y } = touch.start;
-    send({ type: 'input_mouse', eventType: 'mouseMoved', x, y });
-    send({ type: 'input_mouse', eventType: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-    send({ type: 'input_mouse', eventType: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
-  }
-  touch = null; e.preventDefault();
-}, { passive: false });
-// Mouse (when a pointer is attached, or for desktop testing)
-canvas.addEventListener('mousedown', e => { if (e.clientY - canvas.getBoundingClientRect().top < 24) showBar(); const { x, y } = toPage(e); send({ type: 'input_mouse', eventType: 'mousePressed', x, y, button: 'left', clickCount: 1 }); });
+canvas.addEventListener('touchend', e => { if (touch && !touch.moved) tapAt(touch.start.x, touch.start.y); touch = null; e.preventDefault(); }, { passive: false });
+canvas.addEventListener('mousedown', e => { const { x, y } = toPage(e); send({ type: 'input_mouse', eventType: 'mousePressed', x, y, button: 'left', clickCount: 1 }); });
 canvas.addEventListener('mouseup', e => { const { x, y } = toPage(e); send({ type: 'input_mouse', eventType: 'mouseReleased', x, y, button: 'left', clickCount: 1 }); });
-canvas.addEventListener('wheel', e => { const { x, y } = toPage(e); send({ type: 'input_mouse', eventType: 'mouseWheel', x, y, deltaX: e.deltaX, deltaY: e.deltaY }); e.preventDefault(); }, { passive: false });
+canvas.addEventListener('wheel', e => { scrollBy(e.deltaX, e.deltaY, toPage(e)); e.preventDefault(); }, { passive: false });
 
-// ---------- input: keyboard (hidden field summons the Android keyboard) ----------
-const SPECIAL = { Enter: 'Enter', Backspace: 'Backspace', Tab: 'Tab', Escape: 'Escape', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight' };
-key.addEventListener('keydown', e => {
-  if (SPECIAL[e.key]) { send({ type: 'input_keyboard', eventType: 'keyDown', key: e.key, code: e.code || e.key }); send({ type: 'input_keyboard', eventType: 'keyUp', key: e.key, code: e.code || e.key }); e.preventDefault(); }
-});
+// ---------- typing (hidden field summons the Android keyboard) ----------
+const pressKey = k => { send({ type: 'input_keyboard', eventType: 'keyDown', key: k, code: k }); send({ type: 'input_keyboard', eventType: 'keyUp', key: k, code: k }); };
+key.addEventListener('keydown', e => { if (['Enter', 'Backspace', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) { pressKey(e.key); e.preventDefault(); } });
 key.addEventListener('beforeinput', e => {
   if (e.inputType === 'insertText' && e.data) for (const ch of e.data) send({ type: 'input_keyboard', eventType: 'char', text: ch });
-  else if (e.inputType === 'deleteContentBackward') { send({ type: 'input_keyboard', eventType: 'keyDown', key: 'Backspace', code: 'Backspace' }); send({ type: 'input_keyboard', eventType: 'keyUp', key: 'Backspace', code: 'Backspace' }); }
-  else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') { send({ type: 'input_keyboard', eventType: 'keyDown', key: 'Enter', code: 'Enter' }); send({ type: 'input_keyboard', eventType: 'keyUp', key: 'Enter', code: 'Enter' }); }
+  else if (e.inputType === 'deleteContentBackward') pressKey('Backspace');
+  else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') pressKey('Enter');
   e.preventDefault();
 });
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-layout();
-syncViewport();
-connect();
-
 // ---------- device controller (Gamepad API) and hardware keys ----------
-// Left stick / D-pad scroll, right stick moves the pointer, A taps, B goes back,
-// LB/RB page up/down, Start shows the bar, Select toggles the console.
-// Everything received is also logged to the server so the mapping can be checked.
-const logInput = (() => { let last = 0; return (data) => { const now = Date.now(); if (now - last < 150) return; last = now; fetch('/api/input-log', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) }).catch(() => {}); }; })();
-function scrollBy(dx, dy) { send({ type: 'input_mouse', eventType: 'mouseWheel', x: Math.round(cursor.x), y: Math.round(cursor.y), deltaX: dx, deltaY: dy }); }
-function tapAtCursor() {
-  const x = Math.round(cursor.x), y = Math.round(cursor.y);
-  send({ type: 'input_mouse', eventType: 'mouseMoved', x, y });
-  send({ type: 'input_mouse', eventType: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-  send({ type: 'input_mouse', eventType: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
-}
+// First-guess layout: left stick / D-pad scroll, right stick moves the pointer, A taps, B goes back,
+// LB/RB page up/down, Start opens the address bar, Select opens the tabs drawer.
+// Everything received is logged to the server so the real mapping can be read off the log.
+const logInput = (() => { let last = 0; return data => { const now = Date.now(); if (now - last < 150) return; last = now; api('/api/input-log', data); }; })();
 function showCursor() { cursor.visible = true; clearTimeout(cursor.timer); cursor.timer = setTimeout(() => { cursor.visible = false; draw(); }, 2500); }
 function moveCursor(dx, dy) { cursor.x = Math.max(0, Math.min(fw - 1, cursor.x + dx)); cursor.y = Math.max(0, Math.min(fh - 1, cursor.y + dy)); showCursor(); draw(); }
-const nav = what => fetch('/api/nav/' + what, { method: 'POST' }).catch(() => {});
-
-let padTimer = null, prevButtons = [], rest = null; // rest: axis values when idle, so a stuck axis (e.g. a hat or trigger resting at -1) is not read as movement
+let padTimer = null, prevButtons = [], rest = null;         // rest: axis values when idle (a hat or trigger can rest at -1)
 const dead = v => Math.abs(v) < 0.2 ? 0 : v;
-const rel = (v, i) => { if (!rest) return 0; const r = rest[i] || 0; if (Math.abs(r) > 0.9) return 0; return dead(v - r); };
+const rel = (v, i) => { if (!rest) return 0; const r = rest[i] || 0; return Math.abs(r) > 0.9 ? 0 : dead(v - r); };
 function pollPads() {
   const pad = [...(navigator.getGamepads?.() || [])].find(p => p && p.connected);
   if (!pad) return;
@@ -230,10 +217,10 @@ function pollPads() {
   if (lx || ly) scrollBy(lx * 24, ly * 24);
   if (rx || ry) moveCursor(rx * 14, ry * 14);
   if (b[12]) scrollBy(0, -40); if (b[13]) scrollBy(0, 40); if (b[14]) scrollBy(-40, 0); if (b[15]) scrollBy(40, 0);
-  if (edge(0)) { showCursor(); tapAtCursor(); }
-  if (edge(1)) nav('back');
+  if (edge(0)) { showCursor(); tapAt(Math.round(cursor.x), Math.round(cursor.y)); }
+  if (edge(1)) api('/api/nav/back');
   if (edge(4)) scrollBy(0, -(fh - 80)); if (edge(5)) scrollBy(0, fh - 80);
-  if (edge(9)) showBar(); if (edge(8)) document.getElementById('con').click();
+  if (edge(9)) openUrlBar(); if (edge(8)) openDrawer();
   const pressed = b.map((v, i) => v ? i : -1).filter(i => i >= 0);
   const moved = ax.some((v, i) => Math.abs(v - (rest?.[i] ?? 0)) > 0.2);
   if (pressed.length || moved) logInput({ type: 'gamepad', id: pad.id, mapping: pad.mapping, pressed, axes: ax.slice(0, 8), rest: rest?.slice(0, 8) });
@@ -243,13 +230,16 @@ function startPads() { if (!padTimer) padTimer = setInterval(() => { if (documen
 addEventListener('gamepadconnected', e => { logInput({ type: 'gamepadconnected', id: e.gamepad.id, mapping: e.gamepad.mapping, buttons: e.gamepad.buttons.length, axes: e.gamepad.axes.length }); startPads(); });
 addEventListener('gamepaddisconnected', () => { clearInterval(padTimer); padTimer = null; });
 if ([...(navigator.getGamepads?.() || [])].some(p => p)) startPads();
-
-// Hardware keys (D-pad and buttons often arrive as key events on Android). Ignored while typing in the keyboard field.
-addEventListener('keydown', e => {
+addEventListener('keydown', e => {                          // D-pad and buttons may arrive as key events on Android
   if (document.activeElement === key || document.activeElement === urlEl) return;
   logInput({ type: 'key', key: e.key, code: e.code, keyCode: e.keyCode });
-  const step = 60;
-  const map = { ArrowUp: () => scrollBy(0, -step), ArrowDown: () => scrollBy(0, step), ArrowLeft: () => scrollBy(-step, 0), ArrowRight: () => scrollBy(step, 0),
-    PageUp: () => scrollBy(0, -(fh - 80)), PageDown: () => scrollBy(0, fh - 80), Enter: () => { showCursor(); tapAtCursor(); }, Escape: () => nav('back'), Backspace: () => nav('back') };
+  const step = 60, map = {
+    ArrowUp: () => scrollBy(0, -step), ArrowDown: () => scrollBy(0, step), ArrowLeft: () => scrollBy(-step, 0), ArrowRight: () => scrollBy(step, 0),
+    PageUp: () => scrollBy(0, -(fh - 80)), PageDown: () => scrollBy(0, fh - 80),
+    Enter: () => { showCursor(); tapAt(Math.round(cursor.x), Math.round(cursor.y)); }, Escape: () => api('/api/nav/back'), Backspace: () => api('/api/nav/back'),
+  };
   if (map[e.key]) { map[e.key](); e.preventDefault(); }
 });
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+layout(); syncViewport(); connect();

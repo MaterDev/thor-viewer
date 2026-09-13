@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#05080c">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Thor Viewer</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -12,23 +12,37 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<div id="bar">
-  <button id="back" title="Back">‹</button>
-  <form id="urlform"><input id="url" type="url" inputmode="url" placeholder="Enter address or search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></form>
-  <button id="kbd" title="Keyboard">⌨</button>
-  <button id="con" title="Console">console <b id="badge" class="hidden">0</b></button>
-  <button id="fs">full screen</button>
-  <button id="hide" title="Hide bar">▴</button>
-</div>
-<div id="stage">
-  <canvas id="screen"></canvas>
-  <div id="status">connecting…</div>
-  <button id="fsbtn" title="Full screen">⛶</button>
+<canvas id="screen"></canvas>
+<div id="status">connecting…</div>
+
+<!-- top-left: tabs drawer -->
+<button id="tabsBtn" class="ib corner" title="Tabs"><svg><use href="icons.svg#menu"/></svg></button>
+<div id="scrim" class="hidden"></div>
+<aside id="drawer" class="panel">
+  <header><span class="label">Tabs</span><button id="tabNew" class="ib" title="New tab"><svg><use href="icons.svg#add"/></svg></button></header>
+  <ul id="tabList"></ul>
+  <footer>
+    <button id="reload" class="ib" title="Reload"><svg><use href="icons.svg#renew"/></svg></button>
+    <button id="kbd" class="ib" title="Keyboard"><svg><use href="icons.svg#keyboard"/></svg></button>
+    <button id="con" class="ib" title="Console"><svg><use href="icons.svg#terminal"/></svg><b id="badge" class="hidden">0</b></button>
+    <button id="fs" class="ib" title="Full screen"><svg><use id="fsIcon" href="icons.svg#maximize"/></svg></button>
+  </footer>
+</aside>
+
+<!-- top-right: collapsible address bar -->
+<div id="urlwrap">
+  <form id="urlbar" class="panel">
+    <button id="back" type="button" class="ib" title="Back"><svg><use href="icons.svg#arrow--left"/></svg></button>
+    <button id="forward" type="button" class="ib" title="Forward"><svg><use href="icons.svg#arrow--right"/></svg></button>
+    <input id="url" type="text" inputmode="url" placeholder="address or search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button id="urlClose" type="button" class="ib" title="Collapse"><svg><use href="icons.svg#chevron--right"/></svg></button>
+  </form>
+  <button id="urlBtn" class="ib corner" title="Address"><svg><use href="icons.svg#link"/></svg></button>
 </div>
 
-<div id="console" class="hidden">
+<div id="console" class="panel hidden">
+  <header><span class="label">Console</span><button id="clear" class="ib" title="Clear"><svg><use href="icons.svg#close"/></svg></button></header>
   <div id="log"></div>
-  <button id="clear">clear</button>
 </div>
 
 <input id="key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
