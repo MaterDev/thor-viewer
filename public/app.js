@@ -31,7 +31,14 @@ function draw() {
 addEventListener('resize', () => { layout(); syncViewport(); });
 
 // Make the remote browser the same size as this view, so pages reflow to the real screen shape.
-let sentSize = '', sizeTimer;
+let sentSize = '', sizeTimer, lastResync = 0;
+function resyncIfMismatch() {
+  if (document.visibilityState !== 'visible') return;
+  if (fw === Math.round(innerWidth) && fh === Math.round(innerHeight)) return;
+  if (Date.now() - lastResync < 3000) return;
+  lastResync = Date.now(); sentSize = ''; syncViewport();
+}
+document.addEventListener('visibilitychange', () => { sentSize = ''; syncViewport(); });
 function syncViewport() {
   clearTimeout(sizeTimer);
   sizeTimer = setTimeout(async () => {
@@ -57,6 +64,7 @@ function connect() {
         frame = img;
         if (m.metadata.deviceWidth !== fw || m.metadata.deviceHeight !== fh) { fw = m.metadata.deviceWidth; fh = m.metadata.deviceHeight; layout(); }
         else draw();
+        resyncIfMismatch();
         status.classList.add('hidden');
         send({ type: 'ack', seq: m.seq });
       };
@@ -104,15 +112,20 @@ document.getElementById('clear').onclick = () => { logEl.textContent = ''; error
 // ---------- bar (shows on a tap near the top edge, auto-hides) ----------
 function showBar() { bar.classList.remove('hidden'); keepBar(); }
 function keepBar() { clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (consoleEl.classList.contains('hidden') && document.activeElement !== key) bar.classList.add('hidden'); }, 4000); }
-const goFullscreen = () => document.documentElement.requestFullscreen?.().catch(() => {});
-document.getElementById('fs').onclick = () => { goFullscreen(); keepBar(); };
-const fsbtn = document.getElementById('fsbtn');
-fsbtn.onclick = goFullscreen;
+const toggleFullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
+const fsBar = document.getElementById('fs'), fsbtn = document.getElementById('fsbtn');
+fsBar.onclick = () => { toggleFullscreen(); keepBar(); };
+fsbtn.onclick = toggleFullscreen;
 function updateFsButton() {
   const app = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
-  fsbtn.classList.toggle('hidden', app || !!document.fullscreenElement || !document.fullscreenEnabled);
+  const full = !!document.fullscreenElement;
+  fsBar.textContent = full ? 'exit full screen' : 'full screen';
+  fsbtn.textContent = full ? '⤡' : '⛶';
+  fsbtn.title = full ? 'Exit full screen' : 'Full screen';
+  fsbtn.classList.toggle('dim', full);
+  fsbtn.classList.toggle('hidden', app || !document.fullscreenEnabled);
 }
-document.addEventListener('fullscreenchange', updateFsButton);
+document.addEventListener('fullscreenchange', () => { updateFsButton(); syncViewport(); });
 updateFsButton();
 document.getElementById('kbd').onclick = () => { key.focus(); keepBar(); };
 
