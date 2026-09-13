@@ -39,15 +39,17 @@ addEventListener('resize', () => { layout(); syncViewport(); });
 // Make the remote browser the same size as this view, so pages reflow to the real screen shape.
 let sentSize = '', sizeTimer, lastResync = 0;
 function resyncIfMismatch() {
-  if (document.visibilityState !== 'visible') return;
+  if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
   if (fw === Math.round(canvas.clientWidth) && fh === Math.round(canvas.clientHeight)) return;
   if (Date.now() - lastResync < 3000) return;
   lastResync = Date.now(); sentSize = ''; syncViewport();
 }
 document.addEventListener('visibilitychange', () => { sentSize = ''; syncViewport(); });
+addEventListener('focus', () => { sentSize = ''; syncViewport(); });
 function syncViewport() {
   clearTimeout(sizeTimer);
   sizeTimer = setTimeout(async () => {
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) return; // only the viewer in front sets the browser size
     const w = Math.round(canvas.clientWidth), h = Math.round(canvas.clientHeight), k = w + 'x' + h;
     if (k === sentSize) return;
     sentSize = k;
@@ -215,14 +217,16 @@ function showCursor() { cursor.visible = true; clearTimeout(cursor.timer); curso
 function moveCursor(dx, dy) { cursor.x = Math.max(0, Math.min(fw - 1, cursor.x + dx)); cursor.y = Math.max(0, Math.min(fh - 1, cursor.y + dy)); showCursor(); draw(); }
 const nav = what => fetch('/api/nav/' + what, { method: 'POST' }).catch(() => {});
 
-let padTimer = null, prevButtons = [];
+let padTimer = null, prevButtons = [], rest = null; // rest: axis values when idle, so a stuck axis (e.g. a hat or trigger resting at -1) is not read as movement
 const dead = v => Math.abs(v) < 0.2 ? 0 : v;
+const rel = (v, i) => { if (!rest) return 0; const r = rest[i] || 0; if (Math.abs(r) > 0.9) return 0; return dead(v - r); };
 function pollPads() {
   const pad = [...(navigator.getGamepads?.() || [])].find(p => p && p.connected);
   if (!pad) return;
   const b = pad.buttons.map(x => x.pressed), ax = pad.axes.map(v => Math.round(v * 100) / 100);
+  if (!rest && !b.some(Boolean)) rest = ax.slice();
   const edge = i => b[i] && !prevButtons[i];
-  const lx = dead(ax[0] || 0), ly = dead(ax[1] || 0), rx = dead(ax[2] || 0), ry = dead(ax[3] || 0);
+  const lx = rel(ax[0] || 0, 0), ly = rel(ax[1] || 0, 1), rx = rel(ax[2] || 0, 2), ry = rel(ax[3] || 0, 3);
   if (lx || ly) scrollBy(lx * 24, ly * 24);
   if (rx || ry) moveCursor(rx * 14, ry * 14);
   if (b[12]) scrollBy(0, -40); if (b[13]) scrollBy(0, 40); if (b[14]) scrollBy(-40, 0); if (b[15]) scrollBy(40, 0);
@@ -231,7 +235,8 @@ function pollPads() {
   if (edge(4)) scrollBy(0, -(fh - 80)); if (edge(5)) scrollBy(0, fh - 80);
   if (edge(9)) showBar(); if (edge(8)) document.getElementById('con').click();
   const pressed = b.map((v, i) => v ? i : -1).filter(i => i >= 0);
-  if (pressed.length || lx || ly || rx || ry) logInput({ type: 'gamepad', id: pad.id, mapping: pad.mapping, pressed, axes: ax.slice(0, 6) });
+  const moved = ax.some((v, i) => Math.abs(v - (rest?.[i] ?? 0)) > 0.2);
+  if (pressed.length || moved) logInput({ type: 'gamepad', id: pad.id, mapping: pad.mapping, pressed, axes: ax.slice(0, 8), rest: rest?.slice(0, 8) });
   prevButtons = b;
 }
 function startPads() { if (!padTimer) padTimer = setInterval(() => { if (document.visibilityState === 'visible') pollPads(); }, 33); }

@@ -28,3 +28,8 @@ Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts
 ## Testing
 
 Serve any page, `agent-browser open` it, load the viewer with the Playwright MCP tools, dispatch `mousedown`/`mouseup` on `#screen` (frame coords + letterbox offset), then verify with `agent-browser get text`. Icons regenerate with headless Chromium screenshots of `icon.svg` (see history in `~/.claude/skills/thor-environment/history.md`).
+
+## Gotchas
+
+- Never keep a second copy of the viewer open (e.g. in the Playwright MCP browser) while the user is using theirs: each copy sets the remote viewport to its own size, and the page visibly re-lays out ("zooms out and back") on every switch. The viewer only sends its size when visible and focused, but test copies are focused too. Open a test copy, check, close it within seconds.
+- The Thor's controller shows up in Chrome as "Odin Controller (Vendor: 2020 Product: 0111)" with `mapping: ""` (non-standard). One axis rests at -1, so axes are read relative to their resting values. Button indices come from `/home/key/.cache/thor-viewer-input.log`, which the viewer appends to on every press.
