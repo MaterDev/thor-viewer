@@ -181,6 +181,10 @@ setInterval(pollErrors, 20000);
 $('con').onclick = () => { consoleEl.classList.toggle('hidden'); errors = 0; badge.classList.add('hidden'); closeDrawer(); if (!consoleEl.classList.contains('hidden')) pollErrors(); };
 $('clear').onclick = () => { logEl.textContent = ''; consoleEl.classList.add('hidden'); };
 
+// ---------- controls reference ----------
+$('help').onclick = () => { $('controls').classList.remove('hidden'); closeDrawer(); };
+$('controlsClose').onclick = () => $('controls').classList.add('hidden');
+
 // ---------- touch and mouse on the picture ----------
 function toPage(t) { return { x: Math.round((t.clientX - view.x) / view.scale), y: Math.round((t.clientY - view.y) / view.scale) }; }
 function tapAt(x, y) {

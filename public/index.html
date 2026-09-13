@@ -25,6 +25,7 @@
     <button id="reload" class="ib" title="Reload"><svg><use href="icons.svg#renew"/></svg></button>
     <button id="kbd" class="ib" title="Keyboard"><svg><use href="icons.svg#keyboard"/></svg></button>
     <button id="con" class="ib" title="Console"><svg><use href="icons.svg#terminal"/></svg><b id="badge" class="hidden">0</b></button>
+    <button id="help" class="ib" title="Controls"><svg><use href="icons.svg#help"/></svg></button>
     <button id="fs" class="ib" title="Full screen"><svg><use id="fsIcon" href="icons.svg#maximize"/></svg></button>
   </footer>
 </aside>
@@ -40,6 +41,30 @@
   <button id="urlBtn" class="ib corner" title="Address"><svg><use href="icons.svg#link"/></svg></button>
 </div>
 
+<div id="controls" class="panel hidden">
+  <header><span class="label">Controls</span><button id="controlsClose" class="ib" title="Close"><svg><use href="icons.svg#close"/></svg></button></header>
+  <div class="cbody">
+    <h3>Touch</h3>
+    <dl>
+      <dt>Tap</dt><dd>click on the page</dd>
+      <dt>Drag</dt><dd>scroll</dd>
+      <dt>Top-left icon</dt><dd>tabs drawer</dd>
+      <dt>Top-right icon</dt><dd>address bar</dd>
+    </dl>
+    <h3>Controller</h3>
+    <dl>
+      <dt>A</dt><dd>tap where the pointer is</dd>
+      <dt>B</dt><dd>back</dd>
+      <dt>X</dt><dd>tabs drawer</dd>
+      <dt>Y</dt><dd>address bar</dd>
+      <dt>L1 / R1</dt><dd>page up / down</dd>
+      <dt>D-pad</dt><dd>scroll</dd>
+      <dt>Left stick</dt><dd>scroll</dd>
+      <dt>Right stick</dt><dd>move pointer</dd>
+    </dl>
+    <p class="note">Start, Select and stick-clicks are handled by the system and are not available here.</p>
+  </div>
+</div>
 <div id="console" class="panel hidden">
   <header><span class="label">Console</span><button id="clear" class="ib" title="Clear"><svg><use href="icons.svg#close"/></svg></button></header>
   <div id="log"></div>
