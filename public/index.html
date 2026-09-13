@@ -63,6 +63,20 @@
       <dt>Right stick</dt><dd>move pointer</dd>
     </dl>
     <p class="note">Start, Select and stick-clicks are handled by the system and are not available here.</p>
+    <button id="calibStart" class="btn">Calibrate controller</button>
+  </div>
+</div>
+<div id="calib" class="panel hidden">
+  <header><span class="label">Calibrate</span><button id="calibCancel" class="ib" title="Cancel"><svg><use href="icons.svg#close"/></svg></button></header>
+  <div class="cbody calibbody">
+    <div id="calibProgress" class="cprog"></div>
+    <div id="calibPrompt" class="cprompt">Press the button for:</div>
+    <div id="calibAction" class="caction"></div>
+    <div class="crow">
+      <button id="calibSkip" class="btn">Skip (not available)</button>
+      <button id="calibDone" class="btn hidden">Save</button>
+    </div>
+    <p class="note">Press the physical button you want for each action. Buttons the system holds down are ignored automatically.</p>
   </div>
 </div>
 <div id="console" class="panel hidden">

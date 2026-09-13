@@ -29,11 +29,10 @@ Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts
 - **Controller:** shows up as "Odin Controller (Vendor: 2020 Product: 0111)", `mapping: ""`; axes 0/1 are the left stick. Axis rest values are sampled after 1s of stillness. Button indices are still a guess; presses are logged to the input log for mapping.
 - **Testing by hand:** load the viewer with the Playwright MCP tools, dispatch `mousedown`/`mouseup` on `#screen` at `view.x + x*view.scale`, verify with `agent-browser get text`, and close the test page promptly. `pkill -f` kills the Bash tool's own shell; kill by PID.
 
-## Controller mapping (calibrated 2026-09-13)
+## Controller
 
-The Thor pad ("Odin Controller", non-standard) button indices, from the input log:
-- Reliable: A=1, B=2, X=3, Y=4, L1=5, R1=6, L2=7, D-pad U/D/L/R=12/13/14/15, left stick=axes 0/1, right stick=axes 2/3.
-- Button 9 is stuck permanently pressed (phantom) — filtered out in `pollPads` via `PHANTOM`.
-- Start (registered as button 0, ~1 in 3 presses), Select, L3 and R3 are intercepted by Android / AYN Game Assistant and do NOT reliably reach the page. Do not bind actions to them; the map in app.js (`PAD`) intentionally omits them.
-- Actions: A=tap at pointer, B=back, X=tabs drawer, Y=address bar, L1/R1=page up/down, D-pad=scroll, left stick=scroll, right stick=move pointer.
-- Recalibrate by clearing `~/.cache/thor-viewer-input.log`, reloading the viewer (must be the front window), pressing buttons one at a time ~1s apart, then reading the log.
+Buttons are learned by in-app calibration, not hardcoded, because the Thor pad ("Odin Controller", non-standard) has variable indices and phantom/sticky buttons (9 always, 4 intermittently). Controls panel (? button) has "Calibrate controller": it samples held/phantom buttons first (500ms) to exclude them, then steps through each action (tap, back, tabs, address bar, page up, page down) capturing one fresh button-down each, and saves the action->index map to localStorage ("thorButtons"). `BIND` loads it at startup over `DEFAULT_BIND`.
+
+Stable, not calibrated: D-pad = 12/13/14/15 (`DPAD`), left stick = axes 0/1 (scroll), right stick = axes 2/3 (pointer). Start, Select, L3, R3 are intercepted by Android/AYN Game Assistant and often do not reach the page; if calibration can't capture a button, use Skip and pick a working one.
+
+localStorage is per browser/origin, so calibration is per device browser (and separate in the Playwright test browser).

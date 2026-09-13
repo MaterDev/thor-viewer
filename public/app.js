@@ -227,28 +227,30 @@ key.addEventListener('beforeinput', e => {
 const logInput = (() => { let last = 0; return data => { const now = Date.now(); if (now - last < 150) return; last = now; api('/api/input-log', data); }; })();
 function showCursor() { cursor.visible = true; clearTimeout(cursor.timer); cursor.timer = setTimeout(() => { cursor.visible = false; draw(); }, 2500); }
 function moveCursor(dx, dy) { cursor.x = Math.max(0, Math.min(fw - 1, cursor.x + dx)); cursor.y = Math.max(0, Math.min(fh - 1, cursor.y + dy)); showCursor(); draw(); }
-// AYN Thor pad reports as non-standard "Odin Controller"; indices from calibration (see history / input log).
-// Button 9 reads as permanently pressed (phantom) and is ignored. R2/L3/R3/Start/Select pending a second pass.
-const PAD = { A: 1, B: 2, X: 3, Y: 4, L1: 5, R1: 6, L2: 7, DU: 12, DD: 13, DL: 14, DR: 15 };
-// Start, Select, L3, R3 and R2 are intercepted by Android/AYN Game Assistant and do not reliably reach the page, so no actions use them.
-const PHANTOM = 9;
+// AYN Thor pad is a non-standard "Odin Controller"; button indices vary and some are phantom/sticky,
+// so the action->button map is learned by in-app calibration and saved. D-pad and sticks are stable.
+const DEFAULT_BIND = { tap: 1, back: 2, tabs: 3, address: 4, pageup: 5, pagedown: 6 };
+const DPAD = { up: 12, down: 13, left: 14, right: 15 };
+let BIND = { ...DEFAULT_BIND };
+try { const s = JSON.parse(localStorage.getItem('thorButtons') || 'null'); if (s) BIND = { ...DEFAULT_BIND, ...s }; } catch {}
 let padTimer = null, prevButtons = [], rest = null, stillFor = 0, prevAx = null; // rest: axis values once the sticks have been still for 1s (a hat or trigger can rest at -1)
 const dead = v => Math.abs(v) < 0.2 ? 0 : v;
 const rel = (v, i) => { if (!rest) return 0; const r = rest[i] || 0; return Math.abs(r) > 0.9 ? 0 : dead(v - r); };
 function pollPads() {
   const pad = [...(navigator.getGamepads?.() || [])].find(p => p && p.connected);
   if (!pad) return;
-  const b = pad.buttons.map((x, i) => x.pressed && i !== PHANTOM), ax = pad.axes.map(v => Math.round(v * 100) / 100);
+  if (calib.active) { calibCapture(pad); return; }
+  const b = pad.buttons.map(x => x.pressed), ax = pad.axes.map(v => Math.round(v * 100) / 100);
   if (!rest) { stillFor = prevAx && ax.every((v, i) => v === prevAx[i]) && !b.some(Boolean) ? stillFor + 1 : 0; prevAx = ax; if (stillFor >= 30) rest = ax.slice(); }
   const edge = i => b[i] && !prevButtons[i];
   const lx = rel(ax[0] || 0, 0), ly = rel(ax[1] || 0, 1), rx = rel(ax[2] || 0, 2), ry = rel(ax[3] || 0, 3);
   if (lx || ly) scrollBy(lx * 24, ly * 24);
   if (rx || ry) moveCursor(rx * 14, ry * 14);
-  if (b[PAD.DU]) scrollBy(0, -40); if (b[PAD.DD]) scrollBy(0, 40); if (b[PAD.DL]) scrollBy(-40, 0); if (b[PAD.DR]) scrollBy(40, 0);
-  if (edge(PAD.A)) { showCursor(); tapAt(Math.round(cursor.x), Math.round(cursor.y)); }
-  if (edge(PAD.B)) api('/api/nav/back');
-  if (edge(PAD.L1)) scrollBy(0, -(fh - 80)); if (edge(PAD.R1)) scrollBy(0, fh - 80);
-  if (edge(PAD.Y)) openUrlBar(); if (edge(PAD.X)) openDrawer();
+  if (b[DPAD.up]) scrollBy(0, -40); if (b[DPAD.down]) scrollBy(0, 40); if (b[DPAD.left]) scrollBy(-40, 0); if (b[DPAD.right]) scrollBy(40, 0);
+  if (edge(BIND.tap)) { showCursor(); tapAt(Math.round(cursor.x), Math.round(cursor.y)); }
+  if (edge(BIND.back)) api('/api/nav/back');
+  if (edge(BIND.pageup)) scrollBy(0, -(fh - 80)); if (edge(BIND.pagedown)) scrollBy(0, fh - 80);
+  if (edge(BIND.address)) openUrlBar(); if (edge(BIND.tabs)) openDrawer();
   const pressed = b.map((v, i) => v ? i : -1).filter(i => i >= 0);
   const moved = ax.some((v, i) => Math.abs(v - (rest?.[i] ?? 0)) > 0.2);
   if (pressed.length || moved) logInput({ type: 'gamepad', id: pad.id, mapping: pad.mapping, pressed, axes: ax.slice(0, 8), rest: rest?.slice(0, 8) });
@@ -268,6 +270,49 @@ addEventListener('keydown', e => {                          // D-pad and buttons
   };
   if (map[e.key]) { map[e.key](); e.preventDefault(); }
 });
+
+// ---------- controller calibration ----------
+// Steps through each action, waits for one fresh button-down (buttons already held at the start,
+// which covers phantom/stuck ones, are excluded), and saves the action->index map to localStorage.
+const CALIB_STEPS = [
+  ['tap', 'TAP  (usually A)'], ['back', 'BACK  (usually B)'], ['tabs', 'OPEN TABS'],
+  ['address', 'ADDRESS BAR'], ['pageup', 'PAGE UP  (a shoulder button)'], ['pagedown', 'PAGE DOWN  (a shoulder button)'],
+];
+const calib = { active: false, step: 0, baseline: new Set(), used: new Set(), prev: new Set(), result: {}, settleUntil: 0 };
+function startCalibration() {
+  calib.active = true; calib.step = 0; calib.used = new Set(); calib.result = {};
+  calib.baseline = new Set(); calib.prev = new Set(); calib.settleUntil = Date.now() + 500;
+  $('controls').classList.add('hidden'); $('calib').classList.remove('hidden');
+  startPads(); renderCalib();
+}
+function endCalibration(save) {
+  calib.active = false; $('calib').classList.add('hidden');
+  if (save) { BIND = { ...DEFAULT_BIND, ...calib.result }; try { localStorage.setItem('thorButtons', JSON.stringify(BIND)); } catch {} }
+}
+function renderCalib() {
+  const done = calib.step >= CALIB_STEPS.length;
+  $('calibPrompt').textContent = done ? 'All set.' : 'Press the button for:';
+  $('calibAction').textContent = done ? '' : CALIB_STEPS[calib.step][1];
+  $('calibProgress').textContent = done ? '' : (calib.step + 1) + ' / ' + CALIB_STEPS.length;
+  $('calibDone').classList.toggle('hidden', !done);
+  $('calibSkip').classList.toggle('hidden', done);
+}
+function calibCapture(pad) {
+  const pressed = new Set(pad.buttons.map((x, i) => x.pressed ? i : -1).filter(i => i >= 0));
+  if (Date.now() < calib.settleUntil) { pressed.forEach(i => calib.baseline.add(i)); calib.prev = pressed; return; }
+  if (calib.step >= CALIB_STEPS.length) return;
+  for (const i of pressed) {
+    if (!calib.prev.has(i) && !calib.baseline.has(i) && !calib.used.has(i)) {
+      calib.result[CALIB_STEPS[calib.step][0]] = i; calib.used.add(i); calib.step++; renderCalib();
+      break;
+    }
+  }
+  calib.prev = pressed;
+}
+$('calibStart').onclick = startCalibration;
+$('calibSkip').onclick = () => { if (calib.step < CALIB_STEPS.length) { calib.step++; renderCalib(); } };
+$('calibDone').onclick = () => endCalibration(true);
+$('calibCancel').onclick = () => endCalibration(false);
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout(); syncViewport(); connect();
