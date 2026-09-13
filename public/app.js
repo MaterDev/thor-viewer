@@ -29,11 +29,13 @@ function draw() {
     ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = '#5ee0ff'; ctx.fill();
   }
 }
-addEventListener('resize', () => { layout(); syncViewport(); });
+let lastW = innerWidth;
+addEventListener('resize', () => { layout(); if (innerWidth !== lastW) { lastW = innerWidth; syncViewport(); } }); // height-only changes (toolbar, keyboard) do not resize the page
 
 // ---------- viewport sync: the remote browser takes this screen's exact size ----------
 let sentSize = '', sizeTimer, lastResync = 0;
-const inFront = () => document.visibilityState === 'visible' && document.hasFocus(); // only the viewer in front sets the size
+const TEST_BROWSER = /HeadlessChrome/.test(navigator.userAgent);            // Claude's own test copies never set the size
+const inFront = () => !TEST_BROWSER && document.visibilityState === 'visible' && document.hasFocus(); // only the viewer in front sets the size
 function syncViewport() {
   clearTimeout(sizeTimer);
   sizeTimer = setTimeout(() => {
@@ -154,7 +156,7 @@ function updateFs() {
   const app = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
   $('fs').classList.toggle('hidden', app || !document.fullscreenEnabled);
 }
-document.addEventListener('fullscreenchange', () => { updateFs(); syncViewport(); });
+document.addEventListener('fullscreenchange', () => { updateFs(); sentSize = ''; syncViewport(); });
 updateFs();
 
 // ---------- console ----------

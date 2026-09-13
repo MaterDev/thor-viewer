@@ -55,6 +55,9 @@ createServer(async (req, res) => {
   if (path === '/api/viewport' && req.method === 'POST') {
     let body = ''; for await (const chunk of req) body += chunk;
     const { w, h } = JSON.parse(body || '{}');
+    const ua = req.headers['user-agent'] || '';
+    appendFile(INPUT_LOG, `${new Date().toISOString()} viewport ${w}x${h} from ${ua.slice(0, 80)}\n`).catch(() => {});
+    if (/HeadlessChrome/.test(ua)) { res.writeHead(403, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: false, reason: 'test browsers may not resize the shared session' })); }
     const ok = Number.isInteger(w) && Number.isInteger(h) && w >= 200 && h >= 200 && w <= 4096 && h <= 4096 && await setViewport(w, h);
     res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ ok }));
