@@ -25,7 +25,7 @@ The interface uses [Carbon](https://carbondesignsystem.com/) icons and a restrai
 The viewer is one of three projects designed to work together on this device:
 
 - **Thor Viewer** (this repo) — the mirror and shell you watch and drive on the top screen.
-- **[Canvas Lab](https://github.com/MaterDev/canvas-lab)** — a gallery of self-contained web-graphics pieces (WebGPU, WebGL2, Canvas2D, SVG, CSS), watched and controlled through this viewer.
+- **[Canvas Lab](https://github.com/MaterDev/thor-canvas-lab)** — a gallery of self-contained web-graphics pieces (WebGPU, WebGL2, Canvas2D, SVG, CSS), watched and controlled through this viewer.
 - **[turnip-kgsl-shim](https://github.com/MaterDev/turnip-kgsl-shim)** — the runtime shim that gets the handheld's real GPU to the headless Chromium the viewer mirrors.
 
 Because of that shim, the Chromium behind the viewer renders on the **actual Adreno 740 GPU**, not a software rasterizer. WebGL2 runs hardware-accelerated (ANGLE-on-Vulkan), and **WebGPU** runs on the GPU too — the lead image above is a WebGPU raymarch piece from Canvas Lab at 60fps, mirrored live through this viewer. (The GPU is deliberately disguised as SwiftShader to satisfy Chromium's decoder, so a page must never trust `adapter.info` or `adapter.isFallbackAdapter`; Canvas Lab's `gpu.js` handles that. See turnip-kgsl-shim for the full mechanism.)
