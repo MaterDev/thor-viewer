@@ -41,3 +41,13 @@ Buttons are learned by in-app calibration, not hardcoded, because the Thor pad (
 Stable, not calibrated: D-pad = 12/13/14/15 (`DPAD`), left stick = axes 0/1 (scroll), right stick = axes 2/3 (pointer). Start, Select, L3, R3 are intercepted by Android/AYN Game Assistant and often do not reach the page; if calibration can't capture a button, use Skip and pick a working one.
 
 localStorage is per browser/origin, so calibration is per device browser (and separate in the Playwright test browser).
+## Performance
+
+Render path: CDP screencast (JPEG) -> agent-browser WS -> viewer. Client-side tuning that matters:
+- Frame cap `maxFps=60` (was 15), ack pacing kept (bounds in-flight frames to 1, so latency never builds — go as fast as the device renders, never queue stale frames).
+- Decode with `createImageBitmap(Blob)` (off-main-thread), not `new Image()` + data URL; previous bitmap `.close()`d each frame.
+- Canvas backing store = frame's native pixels (e.g. 832x468), CSS-scaled to fill; NOT `innerWidth*devicePixelRatio` (was ~3x the pixels on a hi-DPI screen for no quality gain). 2d context created with `{alpha:false, desynchronized:true}`.
+- Measured ~53 fps rendered on-device (tools/measure-fps.mjs animates a page and counts acks), up from the old 15 cap.
+- Optional FPS meter: "Show FPS" in the controls panel (localStorage `thorFps`).
+
+Not solved (remote-render side, not streaming): the remote Chromium runs `--disable-gpu` (no namespaces for the GPU sandbox here), so WebGL/WebGPU render in software (SwiftShader) and heavy scenes drop frames at the source before streaming. For GPU-accurate/heavy creative work, test in the device's real Chrome too. Daemon-wide stream quality is `AGENT_BROWSER_STREAM_QUALITY` (default 80) if gradients need it.

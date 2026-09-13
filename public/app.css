@@ -4,7 +4,7 @@
   --mono: ui-monospace, "JetBrains Mono", Menlo, monospace; --sans: system-ui, sans-serif;
 }
 html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; overscroll-behavior: none; touch-action: none; font: 13px var(--sans); color: var(--ink); }
-#screen { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#screen { position: fixed; left: 0; top: 0; touch-action: none; image-rendering: auto; }
 #status { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--ink-dim); font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; text-align: center; }
 .hidden { display: none !important; }
 
@@ -88,3 +88,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #histList .ht { display: block; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #histList .hu { display: block; font: 10px var(--mono); color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #histList .empty { padding: 10px; color: var(--ink-dim); font: 11px var(--mono); }
+
+#fps { position: fixed; top: max(6px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 22; padding: 3px 8px; background: rgba(8,14,20,.8); border: 1px solid var(--line); border-radius: 4px; font: 11px var(--mono); color: var(--accent); pointer-events: none; }
+.btn.on { background: rgba(94,224,255,.28); }

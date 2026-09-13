@@ -1,9 +1,9 @@
 // Thor Viewer: full-screen live view of the agent-browser "thor" session.
 // Connects straight to agent-browser's stream (JPEG frames + input injection);
 // tabs, navigation and page errors go through the small server API.
-const STREAM = 'ws://127.0.0.1:9223/?pacing=ack&maxFps=15';
+const STREAM = 'ws://127.0.0.1:9223/?pacing=ack&maxFps=60';
 const $ = id => document.getElementById(id);
-const canvas = $('screen'), ctx = canvas.getContext('2d');
+const canvas = $('screen'), ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 const status = $('status'), urlEl = $('url'), urlwrap = $('urlwrap'), drawer = $('drawer'), scrim = $('scrim');
 const consoleEl = $('console'), logEl = $('log'), badge = $('badge'), key = $('key');
 
@@ -50,19 +50,22 @@ function renderHistory() {
 
 // ---------- drawing ----------
 function layout() {
-  const dpr = devicePixelRatio || 1, W = innerWidth, H = innerHeight;
-  canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const scale = Math.min(W / fw, H / fh);
-  view = { scale, x: (W - fw * scale) / 2, y: (H - fh * scale) / 2 };
+  const W = innerWidth, H = innerHeight, scale = Math.min(W / fw, H / fh);
+  const cssW = Math.round(fw * scale), cssH = Math.round(fh * scale);
+  const x = Math.round((W - cssW) / 2), y = Math.round((H - cssH) / 2);
+  view = { scale, x, y };
+  if (canvas.width !== fw || canvas.height !== fh) { canvas.width = fw; canvas.height = fh; } // backing store = frame's native pixels
+  canvas.style.left = x + 'px'; canvas.style.top = y + 'px';
+  canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
   draw();
 }
 function draw() {
-  ctx.fillStyle = '#05080c'; ctx.fillRect(0, 0, innerWidth, innerHeight);
-  if (frame) ctx.drawImage(frame, view.x, view.y, fw * view.scale, fh * view.scale);
+  if (frame) ctx.drawImage(frame, 0, 0, fw, fh);
+  else { ctx.fillStyle = '#05080c'; ctx.fillRect(0, 0, fw, fh); }
   if (cursor.visible) {
-    const x = view.x + cursor.x * view.scale, y = view.y + cursor.y * view.scale;
-    ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.strokeStyle = '#5ee0ff'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = '#5ee0ff'; ctx.fill();
+    const r = 10 / view.scale, lw = 2 / view.scale;
+    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r, 0, Math.PI * 2); ctx.strokeStyle = '#5ee0ff'; ctx.lineWidth = lw; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r / 5, 0, Math.PI * 2); ctx.fillStyle = '#5ee0ff'; ctx.fill();
   }
 }
 let lastW = innerWidth;
@@ -98,15 +101,16 @@ function connect() {
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
     if (m.type === 'frame') {
-      const img = new Image();
-      img.onload = () => {
-        frame = img;
+      const bin = atob(m.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      createImageBitmap(new Blob([bytes], { type: 'image/jpeg' })).then(bmp => {
+        if (frame && frame.close) frame.close();
+        frame = bmp;
         if (m.metadata.deviceWidth !== fw || m.metadata.deviceHeight !== fh) { fw = m.metadata.deviceWidth; fh = m.metadata.deviceHeight; layout(); } else draw();
         status.classList.add('hidden');
         send({ type: 'ack', seq: m.seq });
-        resyncIfMismatch();
-      };
-      img.src = 'data:image/jpeg;base64,' + m.data;
+        resyncIfMismatch(); fpsTick();
+      }).catch(() => send({ type: 'ack', seq: m.seq }));
     } else if (m.type === 'url') {
       if (document.activeElement !== urlEl) urlEl.value = m.url;
       addHistory(m.url);
@@ -353,6 +357,19 @@ $('calibStart').onclick = startCalibration;
 $('calibSkip').onclick = () => { if (calib.step < CALIB_STEPS.length) { calib.step++; renderCalib(); } };
 $('calibDone').onclick = () => endCalibration(true);
 $('calibCancel').onclick = () => endCalibration(false);
+
+// ---------- optional FPS meter ----------
+let fpsCount = 0, fpsLast = performance.now(), showFps = false;
+try { showFps = localStorage.getItem('thorFps') === '1'; } catch {}
+function fpsTick() {
+  if (!showFps) return;
+  fpsCount++;
+  const now = performance.now();
+  if (now - fpsLast >= 500) { const el = $('fps'); if (el) el.textContent = Math.round(fpsCount * 1000 / (now - fpsLast)) + ' fps'; fpsCount = 0; fpsLast = now; }
+}
+function applyFps() { const el = $('fps'); if (el) el.classList.toggle('hidden', !showFps); }
+$('fpsToggle').onclick = () => { showFps = !showFps; try { localStorage.setItem('thorFps', showFps ? '1' : '0'); } catch {} applyFps(); $('fpsToggle').classList.toggle('on', showFps); };
+applyFps(); $('fpsToggle').classList.toggle('on', showFps);
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout(); syncViewport(); connect();
