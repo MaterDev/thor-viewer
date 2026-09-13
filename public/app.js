@@ -28,7 +28,19 @@ function draw() {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, innerWidth, innerHeight);
   if (frame) ctx.drawImage(frame, view.x, view.y, fw * view.scale, fh * view.scale);
 }
-addEventListener('resize', layout);
+addEventListener('resize', () => { layout(); syncViewport(); });
+
+// Make the remote browser the same size as this view, so pages reflow to the real screen shape.
+let sentSize = '', sizeTimer;
+function syncViewport() {
+  clearTimeout(sizeTimer);
+  sizeTimer = setTimeout(async () => {
+    const w = Math.round(innerWidth), h = Math.round(innerHeight), k = w + 'x' + h;
+    if (k === sentSize) return;
+    sentSize = k;
+    try { await fetch('/api/viewport', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ w, h }) }); } catch {}
+  }, 300);
+}
 
 // ---------- stream ----------
 function connect() {
@@ -92,7 +104,16 @@ document.getElementById('clear').onclick = () => { logEl.textContent = ''; error
 // ---------- bar (shows on a tap near the top edge, auto-hides) ----------
 function showBar() { bar.classList.remove('hidden'); keepBar(); }
 function keepBar() { clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (consoleEl.classList.contains('hidden') && document.activeElement !== key) bar.classList.add('hidden'); }, 4000); }
-document.getElementById('fs').onclick = () => { document.documentElement.requestFullscreen?.().catch(() => {}); keepBar(); };
+const goFullscreen = () => document.documentElement.requestFullscreen?.().catch(() => {});
+document.getElementById('fs').onclick = () => { goFullscreen(); keepBar(); };
+const fsbtn = document.getElementById('fsbtn');
+fsbtn.onclick = goFullscreen;
+function updateFsButton() {
+  const app = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
+  fsbtn.classList.toggle('hidden', app || !!document.fullscreenElement || !document.fullscreenEnabled);
+}
+document.addEventListener('fullscreenchange', updateFsButton);
+updateFsButton();
 document.getElementById('kbd').onclick = () => { key.focus(); keepBar(); };
 
 // ---------- input: touch → mouse on the remote page ----------
@@ -144,4 +165,5 @@ key.addEventListener('beforeinput', e => {
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout();
+syncViewport();
 connect();

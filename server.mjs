@@ -20,6 +20,12 @@ const TYPES = {
   '.svg': 'image/svg+xml',
 };
 
+function setViewport(w, h) {
+  return new Promise(resolve => {
+    execFile(AGENT_BROWSER, ["set", "viewport", String(w), String(h)], { timeout: 15000 }, err => resolve(!err));
+  });
+}
+
 function pageErrors() {
   return new Promise(resolve => {
     execFile(AGENT_BROWSER, ['errors', '--json'], { timeout: 10000 }, (err, stdout) => {
@@ -33,6 +39,13 @@ createServer(async (req, res) => {
   if (path === '/api/errors') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
     return res.end(JSON.stringify(await pageErrors()));
+  }
+  if (path === '/api/viewport' && req.method === 'POST') {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const { w, h } = JSON.parse(body || '{}');
+    const ok = Number.isInteger(w) && Number.isInteger(h) && w >= 200 && h >= 200 && w <= 4096 && h <= 4096 && await setViewport(w, h);
+    res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok }));
   }
   if (path === '/') path = '/index.html';
   const file = join(ROOT, path);
