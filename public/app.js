@@ -12,6 +12,42 @@ let view = { scale: 1, x: 0, y: 0 };                       // where the frame is
 const cursor = { x: 640, y: 360, visible: false, timer: null }; // controller pointer, frame coords
 const api = (path, body) => fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' }).catch(() => {});
 
+// ---------- visited-page history (built from stream url events; per device) ----------
+let history = [];
+try { history = JSON.parse(localStorage.getItem('thorHistory') || '[]'); } catch {}
+let urlEdited = false;
+function addHistory(url) {
+  if (!url || url.startsWith('about:')) return;
+  if (history.length && history[history.length - 1].url === url) return;
+  history.push({ url, t: Date.now() });
+  if (history.length > 100) history = history.slice(-100);
+  try { localStorage.setItem('thorHistory', JSON.stringify(history)); } catch {}
+  if (urlwrap.classList.contains('open')) renderHistory();
+}
+function renderHistory() {
+  const list = document.getElementById('histList');
+  const filter = urlEdited ? urlEl.value.trim().toLowerCase() : '';
+  const seen = new Set(), items = [];
+  for (let i = history.length - 1; i >= 0 && items.length < 15; i--) {
+    const u = history[i].url;
+    if (seen.has(u)) continue;
+    if (filter && !u.toLowerCase().includes(filter)) continue;
+    seen.add(u); items.push(history[i]);
+  }
+  list.textContent = '';
+  if (!items.length) { list.classList.add('hidden'); return; }
+  list.classList.remove('hidden');
+  for (const it of items) {
+    const li = document.createElement('li');
+    let host = it.url; try { host = new URL(it.url).hostname; } catch {}
+    const t = document.createElement('span'); t.className = 'ht'; t.textContent = host;
+    const u = document.createElement('span'); u.className = 'hu'; u.textContent = it.url;
+    li.append(t, u);
+    li.onclick = () => { closeUrlBar(); api('/api/nav/open', { url: it.url }); };
+    list.appendChild(li);
+  }
+}
+
 // ---------- drawing ----------
 function layout() {
   const dpr = devicePixelRatio || 1, W = innerWidth, H = innerHeight;
@@ -73,10 +109,11 @@ function connect() {
       img.src = 'data:image/jpeg;base64,' + m.data;
     } else if (m.type === 'url') {
       if (document.activeElement !== urlEl) urlEl.value = m.url;
+      addHistory(m.url);
     } else if (m.type === 'tabs' && Array.isArray(m.tabs)) {
       setTabs(m.tabs.map(t => ({ id: t.tabId, title: t.title, url: t.url, active: !!t.active })));
       const active = m.tabs.find(t => t.active) || m.tabs[0];
-      if (active?.url && document.activeElement !== urlEl) urlEl.value = active.url;
+      if (active?.url) { if (document.activeElement !== urlEl) urlEl.value = active.url; addHistory(active.url); }
     } else if (m.type === 'console') {
       addLog(m.level, m.text);
     } else if (m.type === 'status' && m.viewportWidth) {
@@ -87,10 +124,12 @@ function connect() {
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
 // ---------- address bar (top right, expands leftwards) ----------
-const openUrlBar = () => { urlwrap.classList.add('open'); urlEl.focus(); urlEl.select(); };
-const closeUrlBar = () => { urlwrap.classList.remove('open'); urlEl.blur(); };
+const openUrlBar = () => { urlwrap.classList.add('open'); urlEdited = false; urlEl.focus(); urlEl.select(); renderHistory(); };
+const closeUrlBar = () => { urlwrap.classList.remove('open'); urlEl.blur(); document.getElementById('histList').classList.add('hidden'); };
+const toggleUrlBar = () => urlwrap.classList.contains('open') ? closeUrlBar() : openUrlBar();
 $('urlBtn').onclick = openUrlBar;
 $('urlClose').onclick = closeUrlBar;
+urlEl.addEventListener('input', () => { urlEdited = true; renderHistory(); });
 $('back').onclick = () => api('/api/nav/back');
 $('forward').onclick = () => api('/api/nav/forward');
 $('urlbar').onsubmit = e => {
@@ -117,6 +156,7 @@ const openDrawer = async () => {
   if (!tabs.length) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
 };
 const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
+const toggleDrawer = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 $('tabsBtn').onclick = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 scrim.onclick = closeDrawer;
 $('tabNew').onclick = () => api('/api/tabs/new', {});
@@ -250,7 +290,7 @@ function pollPads() {
   if (edge(BIND.tap)) { showCursor(); tapAt(Math.round(cursor.x), Math.round(cursor.y)); }
   if (edge(BIND.back)) api('/api/nav/back');
   if (edge(BIND.pageup)) scrollBy(0, -(fh - 80)); if (edge(BIND.pagedown)) scrollBy(0, fh - 80);
-  if (edge(BIND.address)) openUrlBar(); if (edge(BIND.tabs)) openDrawer();
+  if (edge(BIND.address)) toggleUrlBar(); if (edge(BIND.tabs)) toggleDrawer();
   const pressed = b.map((v, i) => v ? i : -1).filter(i => i >= 0);
   const moved = ax.some((v, i) => Math.abs(v - (rest?.[i] ?? 0)) > 0.2);
   if (pressed.length || moved) logInput({ type: 'gamepad', id: pad.id, mapping: pad.mapping, pressed, axes: ax.slice(0, 8), rest: rest?.slice(0, 8) });

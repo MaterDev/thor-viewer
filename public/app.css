@@ -39,7 +39,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #tabList .empty { padding: 12px; color: var(--ink-dim); font: 11px var(--mono); }
 
 /* address bar (right, expands leftwards) */
-#urlwrap { position: fixed; top: max(6px, env(safe-area-inset-top)); right: 8px; z-index: 25; display: flex; justify-content: flex-end; }
+#urlwrap { position: fixed; top: max(6px, env(safe-area-inset-top)); right: 8px; z-index: 25; display: flex; flex-direction: column; align-items: flex-end; }
 #urlbar { display: flex; align-items: center; gap: 2px; padding: 2px; margin: 0; width: min(560px, calc(100vw - 72px)); transform-origin: right center; transform: scaleX(0); opacity: 0; transition: transform .2s ease, opacity .15s ease; }
 #urlwrap.open #urlbar { transform: none; opacity: 1; }
 #urlwrap.open #urlBtn { display: none; }
@@ -81,3 +81,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 .caction { margin: 8px 0 6px; font: 22px var(--mono); letter-spacing: .05em; color: var(--accent); text-shadow: var(--glow); min-height: 30px; }
 .crow { display: flex; gap: 10px; }
 .crow .btn { margin-top: 10px; }
+/* recent history under the address bar */
+#histList { list-style: none; margin: 4px 0 0; padding: 4px; width: min(560px, calc(100vw - 72px)); max-height: 40vh; overflow-y: auto; }
+#histList li { padding: 8px 10px; border-left: 2px solid transparent; cursor: pointer; }
+#histList li:active, #histList li.sel { border-left-color: var(--accent); background: rgba(94,224,255,.08); }
+#histList .ht { display: block; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#histList .hu { display: block; font: 10px var(--mono); color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#histList .empty { padding: 10px; color: var(--ink-dim); font: 11px var(--mono); }

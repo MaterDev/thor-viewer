@@ -20,6 +20,11 @@ Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts
 - `public/app.css`: dark glass panels, cyan hairlines, Carbon icons via `<use href="icons.svg#name">`. Icon names are the Carbon 32px file names (`arrow--left`, `trash-can`, ...).
 - `manifest.webmanifest` + `sw.js` + PNG icons (rendered from `icon.svg` with headless Chromium) make it installable from Chrome's "Add to Home screen".
 
+## History and toggles
+
+- The tabs button (touch top-left, controller tabs) and address button (touch top-right, controller address) each TOGGLE their panel: press again to close (`toggleDrawer`, `toggleUrlBar`).
+- Recent history is built client-side from the stream's `url`/`tabs` events (the browser exposes no readable history list), stored in localStorage `thorHistory` (cap 100, per device browser). Opening the address bar shows the most recent 15 unique URLs in `#histList`; typing filters them (`urlEdited` gates filtering so the pre-filled current URL doesn't hide everything). Clicking one navigates via `/api/nav/open`.
+
 ## Rules learned the hard way
 
 - **One viewer sets the page size.** The viewer POSTs its size to `/api/viewport` on load, width change, rotation and full-screen change, only when visible and focused. Height-only resizes (Android toolbar, keyboard) are ignored. The server refuses size changes from `HeadlessChrome` user agents so Playwright MCP test copies can't resize the session the user is watching. Two live viewers with different sizes make the page "zoom out and back"; every size change is logged with its user agent in `~/.cache/thor-viewer-input.log`.
