@@ -204,14 +204,14 @@ key.addEventListener('beforeinput', e => {
 const logInput = (() => { let last = 0; return data => { const now = Date.now(); if (now - last < 150) return; last = now; api('/api/input-log', data); }; })();
 function showCursor() { cursor.visible = true; clearTimeout(cursor.timer); cursor.timer = setTimeout(() => { cursor.visible = false; draw(); }, 2500); }
 function moveCursor(dx, dy) { cursor.x = Math.max(0, Math.min(fw - 1, cursor.x + dx)); cursor.y = Math.max(0, Math.min(fh - 1, cursor.y + dy)); showCursor(); draw(); }
-let padTimer = null, prevButtons = [], rest = null;         // rest: axis values when idle (a hat or trigger can rest at -1)
+let padTimer = null, prevButtons = [], rest = null, stillFor = 0, prevAx = null; // rest: axis values once the sticks have been still for 1s (a hat or trigger can rest at -1)
 const dead = v => Math.abs(v) < 0.2 ? 0 : v;
 const rel = (v, i) => { if (!rest) return 0; const r = rest[i] || 0; return Math.abs(r) > 0.9 ? 0 : dead(v - r); };
 function pollPads() {
   const pad = [...(navigator.getGamepads?.() || [])].find(p => p && p.connected);
   if (!pad) return;
   const b = pad.buttons.map(x => x.pressed), ax = pad.axes.map(v => Math.round(v * 100) / 100);
-  if (!rest && !b.some(Boolean)) rest = ax.slice();
+  if (!rest) { stillFor = prevAx && ax.every((v, i) => v === prevAx[i]) && !b.some(Boolean) ? stillFor + 1 : 0; prevAx = ax; if (stillFor >= 30) rest = ax.slice(); }
   const edge = i => b[i] && !prevButtons[i];
   const lx = rel(ax[0] || 0, 0), ly = rel(ax[1] || 0, 1), rx = rel(ax[2] || 0, 2), ry = rel(ax[3] || 0, 3);
   if (lx || ly) scrollBy(lx * 24, ly * 24);
