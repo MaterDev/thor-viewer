@@ -54,6 +54,11 @@ try {
   check('status overlay hidden after first frame', await page.evaluate(() => document.getElementById('status').classList.contains('hidden')));
   check('Carbon icon sprite loaded', await page.evaluate(() => fetch('icons.svg').then(r => r.ok)));
 
+  // Shell stats bar: persistent, thin, translucent, centered in the gap between the corner buttons, click-through.
+  const stats = await page.evaluate(() => { const el = document.getElementById('stats'); if (!el) return null; const cs = getComputedStyle(el); const r = el.getBoundingClientRect(); const tabs = document.getElementById('tabsBtn').getBoundingClientRect(); const url = document.getElementById('urlBtn').getBoundingClientRect(); return { visible: cs.display !== 'none', pe: cs.pointerEvents, translucent: parseFloat(cs.opacity) < 1, thin: r.height <= 28, gap: r.left > tabs.right && r.right < url.left, hasFps: /fps/.test(el.textContent) }; });
+  check('stats bar visible, thin, translucent, click-through', !!stats && stats.visible && stats.thin && stats.translucent && stats.pe === 'none', JSON.stringify(stats));
+  check('stats bar centered between the corner buttons and shows fps', !!stats && stats.gap && stats.hasFps, JSON.stringify(stats));
+
   // Remote page geometry -> viewer canvas coordinates
   const rects = await abEval(`JSON.stringify(Object.fromEntries(['t','n','g','x','tap'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [id, { x: r.x + r.width / 2, y: r.y + r.height / 2 }]; })))`);
   check('remote test page rendered', !!rects?.tap && rects.tap.y > 0, rects ? `tap zone at ${Math.round(rects.tap.x)},${Math.round(rects.tap.y)}` : 'no rects');
