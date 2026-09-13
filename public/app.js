@@ -120,7 +120,7 @@ function connect() {
         if (m.metadata.deviceWidth !== fw || m.metadata.deviceHeight !== fh) { fw = m.metadata.deviceWidth; fh = m.metadata.deviceHeight; layout(); } else draw();
         status.classList.add('hidden');
         send({ type: 'ack', seq: m.seq });
-        resyncIfMismatch(); fpsTick();
+        resyncIfMismatch(); statTick(bytes.length);
       }).catch(() => send({ type: 'ack', seq: m.seq }));
     } else if (m.type === 'url') {
       if (document.activeElement !== urlEl) urlEl.value = m.url;
@@ -381,17 +381,25 @@ $('calibDone').onclick = () => endCalibration(true);
 $('calibCancel').onclick = () => endCalibration(false);
 
 // ---------- optional FPS meter ----------
-let fpsCount = 0, fpsLast = performance.now(), showFps = false;
-try { showFps = localStorage.getItem('thorFps') === '1'; } catch {}
-function fpsTick() {
-  if (!showFps) return;
-  fpsCount++;
-  const now = performance.now();
-  if (now - fpsLast >= 500) { const el = $('fps'); if (el) el.textContent = Math.round(fpsCount * 1000 / (now - fpsLast)) + ' fps'; fpsCount = 0; fpsLast = now; }
+// Shell stats bar: the FPS/resolution/bandwidth of what we're actually seeing THROUGH the viewer
+// (the CDP screencast stream), independent of whatever the page inside is doing. Subtle, persistent.
+let statCount = 0, statLast = performance.now(), statBytes = 0, showStats = true;
+try { showStats = localStorage.getItem('thorStats') !== '0'; } catch {}
+function statTick(nbytes) {
+  if (!showStats) return;
+  statCount++; statBytes += (nbytes || 0);
+  const now = performance.now(), dt = now - statLast;
+  if (dt >= 500) {
+    const fps = Math.round(statCount * 1000 / dt);
+    const mbps = (statBytes * 8 / 1e6) / (dt / 1000);
+    const el = $('stats');
+    if (el) el.innerHTML = `<span class="v">${fps}</span> fps<span class="sep"> · </span>${fw}×${fh}<span class="sep"> · </span><span class="v">${mbps.toFixed(1)}</span> Mb/s`;
+    statCount = 0; statBytes = 0; statLast = now;
+  }
 }
-function applyFps() { const el = $('fps'); if (el) el.classList.toggle('hidden', !showFps); }
-$('fpsToggle').onclick = () => { showFps = !showFps; try { localStorage.setItem('thorFps', showFps ? '1' : '0'); } catch {} applyFps(); $('fpsToggle').classList.toggle('on', showFps); };
-applyFps(); $('fpsToggle').classList.toggle('on', showFps);
+function applyStats() { const el = $('stats'); if (el) el.classList.toggle('hidden', !showStats); const b = $('statsToggle'); if (b) { b.textContent = showStats ? 'Hide stats bar' : 'Show stats bar'; b.classList.toggle('on', showStats); } }
+$('statsToggle').onclick = () => { showStats = !showStats; try { localStorage.setItem('thorStats', showStats ? '1' : '0'); } catch {} applyStats(); };
+applyStats();
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout(); syncViewport(); connect(); initErrorBaseline();

@@ -14,7 +14,7 @@
 <body>
 <canvas id="screen"></canvas>
 <div id="status">connecting…</div>
-<div id="fps" class="hidden">– fps</div>
+<div id="stats" aria-hidden="true">–</div>
 
 <!-- top-left: tabs drawer -->
 <button id="tabsBtn" class="ib corner" title="Tabs"><svg><use href="icons.svg#menu"/></svg></button>
@@ -65,7 +65,7 @@
       <dt>Right stick</dt><dd>move pointer</dd>
     </dl>
     <p class="note">Start, Select and stick-clicks are handled by the system and are not available here.</p>
-    <button id="fpsToggle" class="btn">Show FPS</button>
+    <button id="statsToggle" class="btn">Hide stats bar</button>
     <button id="calibStart" class="btn">Calibrate controller</button>
   </div>
 </div>
