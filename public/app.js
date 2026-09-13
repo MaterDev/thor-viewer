@@ -71,9 +71,9 @@ function connect() {
       img.src = 'data:image/jpeg;base64,' + m.data;
     } else if (m.type === 'url') {
       if (document.activeElement !== urlEl) urlEl.value = m.url;
-    } else if (m.type === 'tabs') {
-      if (drawer.classList.contains('open')) loadTabs();
-      const active = Array.isArray(m.tabs) && (m.tabs.find(t => t.active) || m.tabs[0]);
+    } else if (m.type === 'tabs' && Array.isArray(m.tabs)) {
+      setTabs(m.tabs.map(t => ({ id: t.tabId, title: t.title, url: t.url, active: !!t.active })));
+      const active = m.tabs.find(t => t.active) || m.tabs[0];
       if (active?.url && document.activeElement !== urlEl) urlEl.value = active.url;
     } else if (m.type === 'console') {
       addLog(m.level, m.text);
@@ -102,14 +102,23 @@ $('urlbar').onsubmit = e => {
 };
 
 // ---------- tabs drawer (top left) ----------
-const openDrawer = () => { drawer.classList.add('open'); scrim.classList.remove('hidden'); loadTabs(); };
+// The stream sends the full tab list many times a second; keep a copy and redraw only when it changes.
+let tabs = [], tabsKey = '';
+function setTabs(list) {
+  const k = JSON.stringify(list);
+  if (k === tabsKey) return;
+  tabs = list; tabsKey = k;
+  if (drawer.classList.contains('open')) renderTabs();
+}
+const openDrawer = async () => {
+  drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs();
+  if (!tabs.length) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
+};
 const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
 $('tabsBtn').onclick = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 scrim.onclick = closeDrawer;
-$('tabNew').onclick = async () => { await api('/api/tabs/new', {}); loadTabs(); };
-async function loadTabs() {
-  let tabs = [];
-  try { tabs = await (await fetch('/api/tabs')).json(); } catch {}
+$('tabNew').onclick = () => api('/api/tabs/new', {});
+function renderTabs() {
   const list = $('tabList'); list.textContent = '';
   if (!tabs.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'no tabs'; list.appendChild(li); return; }
   for (const t of tabs) {
@@ -121,7 +130,7 @@ async function loadTabs() {
     body.onclick = async () => { await api('/api/tabs/switch', { id: t.id }); closeDrawer(); };
     const x = document.createElement('button'); x.className = 'ib'; x.title = 'Close tab';
     x.innerHTML = '<svg><use href="icons.svg#close"/></svg>';
-    x.onclick = async e => { e.stopPropagation(); await api('/api/tabs/close', { id: t.id }); loadTabs(); };
+    x.onclick = e => { e.stopPropagation(); api('/api/tabs/close', { id: t.id }); };
     li.append(body, x); list.appendChild(li);
   }
 }
