@@ -1,0 +1,125 @@
+// End-to-end smoke test for Thor Viewer. Drives the real viewer page in a headless
+// Chromium (playwright-core from the Playwright MCP install) against the real
+// agent-browser "thor" session, and checks results through the agent-browser CLI.
+//
+// Requires the viewer, agent-browser and its stream to be running:
+//   ~/.claude/skills/agent-browser/start.sh
+// Run:  npm test
+// Note: it navigates the shared "thor" session (and restores the URL at the end),
+// so don't run it while someone is using the viewer.
+import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const VIEWER = 'http://127.0.0.1:4850/';
+const AB = '/home/key/.local/bin/agent-browser';
+const CHROMIUM = '/data/data/com.termux/files/usr/bin/chromium-browser';
+const require = createRequire('/home/key/.local/share/playwright-mcp/node_modules/');
+const { chromium } = require('playwright-core');
+
+const PAGE = `<html><head><title>viewer test</title></head><body style="font:24px sans-serif;margin:16px">
+<h1 id="t">Waiting</h1><input id="n" placeholder="name"><button id="g" onclick="t.textContent='Hello, '+n.value;console.log('greeted '+n.value)">Greet</button>
+<button id="x" onclick="undefinedFn()">Break</button>
+<div id="tap" style="width:260px;height:120px;background:#9cf;margin-top:16px" onclick="this.textContent='tapped'">tap zone</div>
+<div style="height:3000px"></div></body></html>`;
+
+const results = [];
+const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  (' + detail + ')' : ''}`); };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const ab = (...args) => new Promise(resolve => execFile(AB, args, { timeout: 20000 }, (err, stdout) => resolve(err ? '' : stdout.trim())));
+const abEval = async js => { try { let v = JSON.parse(await ab('eval', js)); if (typeof v === 'string' && /^[\[{]/.test(v)) v = JSON.parse(v); return v; } catch { return null; } };
+async function until(fn, ms = 6000, step = 200) { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(step); } return v; }
+
+// ---- preconditions ----
+const viewerUp = await fetch(VIEWER).then(r => r.ok).catch(() => false);
+if (!viewerUp) { console.log('FAIL  viewer not running at ' + VIEWER + ' (run ~/.claude/skills/agent-browser/start.sh)'); process.exit(1); }
+const originalUrl = await ab('get', 'url');
+if (!originalUrl) { console.log('FAIL  agent-browser session not reachable (run ~/.claude/skills/agent-browser/start.sh)'); process.exit(1); }
+
+const server = createServer((_, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(PAGE); });
+await new Promise(r => server.listen(0, '127.0.0.1', r));
+const testUrl = `http://127.0.0.1:${server.address().port}/`;
+await ab('open', testUrl);
+
+const browser = await chromium.launch({ executablePath: CHROMIUM, headless: true, args: ['--no-sandbox', '--disable-gpu'] });
+const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+const pageErrors = [];
+page.on('console', m => { if (m.type() === 'error' && !/status of 403/.test(m.text())) pageErrors.push(m.text()); }); // the viewport-guard check causes an intentional 403
+page.on('pageerror', e => pageErrors.push(String(e)));
+
+try {
+  await page.goto(VIEWER);
+  const gotFrame = await until(() => page.evaluate(() => frame !== null && fw > 0), 10000);
+  check('viewer loads and receives a frame', !!gotFrame);
+  check('status overlay hidden after first frame', await page.evaluate(() => document.getElementById('status').classList.contains('hidden')));
+  check('Carbon icon sprite loaded', await page.evaluate(() => fetch('icons.svg').then(r => r.ok)));
+
+  // Remote page geometry -> viewer canvas coordinates
+  const rects = await abEval(`JSON.stringify(Object.fromEntries(['t','n','g','x','tap'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [id, { x: r.x + r.width / 2, y: r.y + r.height / 2 }]; })))`);
+  check('remote test page rendered', !!rects?.tap && rects.tap.y > 0, rects ? `tap zone at ${Math.round(rects.tap.x)},${Math.round(rects.tap.y)}` : 'no rects');
+  const tap = async id => page.evaluate(({ x, y }) => { const c = document.getElementById('screen'); const cx = view.x + x * view.scale, cy = view.y + y * view.scale; for (const t of ['mousedown', 'mouseup']) c.dispatchEvent(new MouseEvent(t, { clientX: cx, clientY: cy, bubbles: true })); }, rects[id]);
+
+  await tap('tap');
+  check('tap on the picture reaches the page', (await until(async () => (await ab('get', 'text', '#tap')) === 'tapped' ? 'tapped' : '')) === 'tapped');
+
+  await tap('n'); await sleep(150);
+  await page.evaluate(() => { const k = document.getElementById('key'); k.focus(); k.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'Thor', cancelable: true, bubbles: true })); });
+  await sleep(150); await tap('g');
+  check('typing via the keyboard field and tapping Greet', (await until(async () => (await ab('get', 'text', '#t')) === 'Hello, Thor' ? 'ok' : '')) === 'ok', await ab('get', 'text', '#t'));
+  check('console message appears in the drawer log', !!(await until(() => page.evaluate(() => [...document.querySelectorAll('#log div')].some(l => l.textContent.includes('greeted Thor'))))));
+  const logLines = await page.evaluate(() => [...document.querySelectorAll('#log div')].filter(l => l.textContent.includes('greeted Thor')).length);
+  check('console messages are not duplicated', logLines === 1, `${logLines} line(s)`);
+
+  await tap('x'); await sleep(300);
+  await page.evaluate(() => { document.getElementById('tabsBtn').click(); document.getElementById('con').click(); });
+  check('uncaught page error shows in the console panel', !!(await until(() => page.evaluate(() => [...document.querySelectorAll('#log div.error')].some(l => l.textContent.includes('undefinedFn'))), 8000)));
+  check('console panel opened', await page.evaluate(() => !document.getElementById('console').classList.contains('hidden')));
+  await page.evaluate(() => document.getElementById('con').click());
+
+  // Address bar
+  await page.evaluate(() => document.getElementById('urlBtn').click());
+  check('address bar expands and shows current URL', await page.evaluate(u => urlwrap.classList.contains('open') && urlEl.value === u, testUrl), await page.evaluate(() => urlEl.value));
+  await page.evaluate(u => { urlEl.value = u; document.getElementById('urlbar').requestSubmit(); }, testUrl + '?nav=1');
+  check('address bar navigates', !!(await until(async () => (await ab('get', 'url')).includes('nav=1'))), await ab('get', 'url'));
+  check('address bar collapses after Go', await page.evaluate(() => !urlwrap.classList.contains('open')));
+  await page.evaluate(() => { document.getElementById('urlBtn').click(); urlEl.value = 'thor viewer test search'; document.getElementById('urlbar').requestSubmit(); });
+  check('search terms go to a search engine', !!(await until(async () => (await ab('get', 'url')).includes('duckduckgo.com/?q=thor'))), await ab('get', 'url'));
+  await ab('open', testUrl);
+
+  // Tabs drawer: list, new, confirm-close
+  await page.evaluate(() => document.getElementById('tabsBtn').click());
+  const before = await until(() => page.evaluate(() => document.querySelectorAll('#tabList li:not(.empty)').length));
+  check('tabs drawer lists the open tab(s)', before >= 1, `${before} tab(s)`);
+  await sleep(2000); // let titles settle after navigation
+  let redraws = 0; await page.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.getElementById('tabList'), { childList: true }); });
+  await sleep(2500); redraws = await page.evaluate(() => window.__redraws);
+  check('tab list does not flicker while idle', redraws === 0, `${redraws} redraws in 2.5s`);
+  await page.evaluate(() => document.getElementById('tabNew').click());
+  const after = await until(() => page.evaluate(n => { const c = document.querySelectorAll('#tabList li:not(.empty)').length; return c > n ? c : 0; }, before), 8000);
+  check('new tab appears in the drawer', after === before + 1, `${after} tab(s)`);
+  await page.evaluate(() => { const li = document.querySelector('#tabList li:not(.active)') || document.querySelector('#tabList li'); li.querySelector('button.ib:not(.yes):not(.no)').click(); });
+  check('closing a tab asks for confirmation first', await page.evaluate(() => !!document.querySelector('#tabList li.arming')));
+  await page.evaluate(() => document.querySelector('#tabList li.arming .yes').click());
+  const closed = await until(() => page.evaluate(n => document.querySelectorAll('#tabList li:not(.empty)').length === n ? 1 : 0, before), 8000);
+  check('confirmed close removes the tab', !!closed, `${await page.evaluate(() => document.querySelectorAll('#tabList li:not(.empty)').length)} tab(s)`);
+  await page.evaluate(() => document.getElementById('scrim').click());
+  check('tapping outside closes the drawer', await page.evaluate(() => !drawer.classList.contains('open')));
+
+  // Size guards
+  const remoteBefore = await abEval(`innerWidth+'x'+innerHeight`);
+  const status = await page.evaluate(() => fetch('/api/viewport', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ w: 900, h: 600 }) }).then(r => r.status));
+  check('server refuses viewport changes from a headless (test) browser', status === 403, `HTTP ${status}`);
+  await page.setViewportSize({ width: 1000, height: 450 }); await sleep(1200);
+  check('height-only resize does not change the remote page size', (await abEval(`innerWidth+'x'+innerHeight`)) === remoteBefore, `${remoteBefore}`);
+
+  check('no JavaScript errors in the viewer page', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
+} catch (e) {
+  check('test run completed', false, String(e).slice(0, 200));
+} finally {
+  await browser.close().catch(() => {});
+  server.close();
+  if (originalUrl && !originalUrl.startsWith('about:')) await ab('open', originalUrl);
+}
+const failed = results.filter(r => !r.ok).length;
+console.log(`\n${results.length - failed}/${results.length} passed`);
+process.exit(failed ? 1 : 0);

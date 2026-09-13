@@ -1,24 +1,25 @@
 {
   "name": "thor-viewer",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Full-screen live view of Claude's browser on the AYN Thor",
+  "main": "server.mjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.mjs",
+    "test": "node --import /home/key/.local/share/playwright-mcp/platform-linux.mjs test/smoke.mjs",
+    "build:icons": "node tools/build-icons.mjs"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MaterDev/thor-viewer.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
+  "license": "MIT",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/MaterDev/thor-viewer/issues"
   },
   "homepage": "https://github.com/MaterDev/thor-viewer#readme",
   "devDependencies": {
     "@carbon/icons": "11.88.0"
-  }
+  },
+  "private": true
 }
