@@ -92,9 +92,12 @@ try {
   // Address bar
   await page.evaluate(() => document.getElementById('urlBtn').click());
   check('address bar expands and shows current URL', await page.evaluate(u => urlwrap.classList.contains('open') && urlEl.value === u, testUrl), await page.evaluate(() => urlEl.value));
+  const refresh = await page.evaluate(() => { const r = document.getElementById('refreshBtn').getBoundingClientRect(), u = document.getElementById('url').getBoundingClientRect(); return { visible: getComputedStyle(document.getElementById('refreshBtn')).display !== 'none' && r.width > 0, gap: Math.round(r.left - u.right) }; });
+  check('refresh stays visible beside the open address field', refresh.visible && refresh.gap >= 0 && refresh.gap <= 12, JSON.stringify(refresh));
   await page.evaluate(u => { urlEl.value = u; document.getElementById('urlbar').requestSubmit(); }, testUrl + '?nav=1');
   check('address bar navigates', !!(await until(async () => (await ab('get', 'url')).includes('nav=1'))), await ab('get', 'url'));
   check('address bar collapses after Go', await page.evaluate(() => !urlwrap.classList.contains('open')));
+  check('refresh stays visible with the address bar collapsed', await page.evaluate(() => { const r = document.getElementById('refreshBtn').getBoundingClientRect(), a = document.getElementById('urlBtn').getBoundingClientRect(); return getComputedStyle(document.getElementById('refreshBtn')).display !== 'none' && Math.abs(r.left - a.right) <= 1; }));
   await page.evaluate(() => { document.getElementById('urlBtn').click(); urlEl.value = 'thor viewer test search'; document.getElementById('urlbar').requestSubmit(); });
   check('search terms go to a search engine', !!(await until(async () => (await ab('get', 'url')).includes('duckduckgo.com/?q=thor'))), await ab('get', 'url'));
   await ab('open', testUrl);

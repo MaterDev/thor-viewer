@@ -15,16 +15,17 @@ Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts
 
 ## Live Page Mode (agents: this is all you need)
 
-- The viewer has two modes (toggle top-left): **Stream** (your headless `thor` page, JPEG) and **Live** (Key's real page in the viewer app). Check with `curl -s 127.0.0.1:4850/api/mode`.
+- The viewer has two modes (toggle top-centre, left of the stats bar): **Stream** (your headless `thor` page, JPEG) and **Live** (Key's real page in the viewer app). Check with `curl -s 127.0.0.1:4850/api/mode`.
 - Once `tools/agent-browser-gate` is installed as `~/.local/bin/agent-browser`, plain `agent-browser` commands follow the mode automatically: in Live they act on Key's live page (use `@refs` from `snapshot`); `close`/`tab`/`set` are refused there.
 - Need your own headless page in Live (WebGL look, screenshots of it): add `--headless`. The gate borrows it (live page paused, a note shown, auto-resume after 60s max) and gives it back.
+- Live tabs: only the active one is loaded; switching reloads it (deliberate: nothing runs in the background).
 - Only one page runs at a time: in Live the headless page is paused (Debugger.pause), during a borrow the live page is. Code: `modes.mjs` (state machine), `live-bridge.mjs`, `headless.mjs`, `public/live.js`. Tests: `npm run test:live`.
 
 ## How it works
 
 - `server.mjs` (Termux node, no runtime dependencies): static files from `public/`, plus a small API where each route is one agent-browser CLI call: `POST /api/viewport`, `POST /api/nav/{back,forward,reload}`, `POST /api/nav/open {url}`, `GET /api/tabs`, `POST /api/tabs/{new,switch,close}`, `GET /api/errors`, `POST /api/input-log`.
 - `public/app.js`: connects to agent-browser's stream (`ws://127.0.0.1:9223/`, ack pacing, 15 fps cap), draws frames on a full-window canvas, injects mouse/keyboard input, and renders the overlays: tabs drawer (left, from the stream's `tabs` messages), address bar (right), console panel, full-screen toggle, controls-reference panel (the ? button), controller pointer.
-- `public/app.css`: dark glass panels, cyan hairlines, Carbon icons via `<use href="icons.svg#name">`. Icon names are the Carbon 32px file names (`arrow--left`, `trash-can`, ...).
+- `public/app.css`: neutral glassmorphism (token names shared with thor-canvas-lab; the viewer's tint is faintly cool). Closed panes are `display:none` (an invisible backdrop-filter still costs GPU). Address and refresh form one joined pill top-right; `.top-pill` is the slot for the Stream/Live toggle at top centre. Carbon icons via `<use href="icons.svg#name">`. Icon names are the Carbon 32px file names (`arrow--left`, `trash-can`, ...).
 - `manifest.webmanifest` + `sw.js` + PNG icons (rendered from `icon.svg` with headless Chromium) make it installable from Chrome's "Add to Home screen".
 
 ## History and toggles
