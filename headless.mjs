@@ -1,6 +1,13 @@
 // Freeze and thaw the agent's headless browser (the agent-browser `thor` session) over CDP.
-// Page.setWebLifecycleState('frozen') stops timers and requestAnimationFrame but keeps the DOM,
-// JS state, URL and scroll; 'active' resumes exactly where it was. Every page target is set.
+//
+// "Freeze" = Debugger.pause on every page: JavaScript stops at its next statement, so timers and
+// requestAnimationFrame stop and no WebGL/WebGPU work is submitted; DOM, JS state, URL and scroll stay.
+// Why not Page.setWebLifecycleState('frozen')? It marks the page hidden, and 'active' does not make it
+// visible again (measured 2026-09-19: rAF stays at 0 until some tab switch), which would leave the page
+// throttled after resume. Debugger.pause leaves visibility alone.
+//
+// Crash safety: the pause belongs to this CDP connection. If this process dies, Chrome drops the
+// connection and resumes the pages by itself.
 //
 // $HEADLESS_AB_ARGS selects another session in tests (e.g. "--session x --profile y").
 // Calls go to the agent-browser wrapper with THOR_GATE=off, so the gate never routes them.
@@ -20,29 +27,47 @@ function connect(url, ms = 4000) {
     const t = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('cdp connect timeout')); }, ms);
     ws.onerror = () => { clearTimeout(t); reject(new Error('cdp connect failed')); };
     ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-    ws.onopen = () => { clearTimeout(t); resolve({
-      send: (method, params = {}, sessionId) => new Promise(r => { const i = ++id; const to = setTimeout(() => { pending.delete(i); r({ error: 'timeout' }); }, 4000); pending.set(i, m => { clearTimeout(to); r(m); }); ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) })); }),
+    const c = {
+      send: (method, params = {}, sessionId) => new Promise(r => {
+        if (ws.readyState !== 1) return r({ error: 'closed' });
+        const i = ++id; const to = setTimeout(() => { pending.delete(i); r({ error: 'timeout' }); }, 4000);
+        pending.set(i, m => { clearTimeout(to); r(m); });
+        ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) }));
+      }),
       close: () => { try { ws.close(); } catch {} },
-    }); };
+      closed: false,
+    };
+    ws.onclose = () => { c.closed = true; };
+    ws.onopen = () => { clearTimeout(t); resolve(c); };
   });
 }
 
-export async function setHeadlessState(state) {
+let held = null;   // { c, sessions: [] } while paused
+
+export async function freezeHeadless() {
+  if (held && !held.c.closed) return held.sessions.length;
   const url = await cdpUrl();
   if (!url) throw new Error('headless session has no CDP url');
   const c = await connect(url);
-  try {
-    const targets = (await c.send('Target.getTargets')).result?.targetInfos || [];
-    let n = 0;
-    for (const t of targets.filter(t => t.type === 'page')) {
-      const s = (await c.send('Target.attachToTarget', { targetId: t.targetId, flatten: true })).result?.sessionId;
-      if (!s) continue;
-      const r = await c.send('Page.setWebLifecycleState', { state }, s);
-      if (!r.error) n++;
-      await c.send('Target.detachFromTarget', { sessionId: s });
-    }
-    return n;
-  } finally { c.close(); }
+  const sessions = [];
+  const targets = (await c.send('Target.getTargets')).result?.targetInfos || [];
+  for (const t of targets.filter(t => t.type === 'page')) {
+    const s = (await c.send('Target.attachToTarget', { targetId: t.targetId, flatten: true })).result?.sessionId;
+    if (!s) continue;
+    await c.send('Debugger.enable', {}, s);
+    const r = await c.send('Debugger.pause', {}, s);
+    if (!r.error) sessions.push(s);
+  }
+  held = { c, sessions };
+  return sessions.length;
 }
-export const freezeHeadless = () => setHeadlessState('frozen');
-export const thawHeadless = () => setHeadlessState('active');
+
+export async function thawHeadless() {
+  const h = held; held = null;
+  if (!h) return 0;
+  for (const s of h.sessions) { await h.c.send('Debugger.resume', {}, s); await h.c.send('Debugger.disable', {}, s); }
+  h.c.close();                       // closing also resumes anything we missed
+  return h.sessions.length;
+}
+
+export const headlessFrozen = () => !!(held && !held.c.closed);

@@ -3,7 +3,7 @@
 // Two throwaway headless sessions with their own profiles:
 //   livetest-host  hosts the viewer page (stands in for Key's installed app); its CDP port is the
 //                  bridge's endpoint (LIVE_CDP), so no adb is involved.
-//   livetest-park  stands in for the `thor` session that Live mode must park and restore.
+//   livetest-park  stands in for the `thor` session that Live mode must freeze and resume.
 // A fixture server plays the dev page shown live. Run: node test/live.mjs
 import { execFile, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const AB = process.env.AGENT_BROWSER || '/home/key/.local/bin/agent-browser';
-const VIEWER = 4857, FIXTURE = 4858, PARK_STREAM = 9237;
+const VIEWER = 4857, FIXTURE = 4858;
 const V = `http://127.0.0.1:${VIEWER}`, F = `http://127.0.0.1:${FIXTURE}`;
 const tmp = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'live-test-'));
 const HOST = ['--session', 'livetest-host', '--profile', join(tmp, 'host')];
@@ -34,14 +34,17 @@ function serve(cmd, args, env) { const p = spawn(cmd, args, { cwd: ROOT, env: { 
 try {
   serve(process.execPath, ['test/fixtures/serve.mjs'], { PORT: String(FIXTURE) });
   await ab([...PARK, 'open', `${F}/?p=1#h`]);
-  await ab([...PARK, 'stream', 'enable', '--port', String(PARK_STREAM)]);
   await ab([...HOST, 'open', 'about:blank']);
   const cdp = await ab([...HOST, 'get', 'cdp-url']);
   const port = (cdp.match(/127\.0\.0\.1:(\d+)/) || [])[1];
   check('host browser exposes CDP', !!port, cdp);
   serve(process.execPath, ['server.mjs'], { PORT: String(VIEWER), LIVE_CDP: `http://127.0.0.1:${port}`,
-    LIVE_PARK_ARGS: PARK.join(' '), LIVE_STREAM_PORT: String(PARK_STREAM) });
+    HEADLESS_AB_ARGS: PARK.join(' '), LIVE_NOTIFY: '0', LIVE_MODE_FILE: join(tmp, 'mode'), LIVE_MODE_LOG: join(tmp, 'modes.log') });
+  // A ticking page in the headless session: rAF and timer counters, some scroll.
+  await ab([...PARK, 'eval', "window.__n=0;(function f(){__n++;requestAnimationFrame(f)})();window.__t=0;setInterval(()=>__t++,100);document.body.style.height='3000px';scrollTo(0,321);1"]);
   await until(() => fetch(V + '/').then(r => r.ok, () => false), 8000);
+  const tick = async () => { let o = await ab([...PARK, 'eval', 'JSON.stringify([__n,__t,location.href,scrollY])'], 8000); try { o = JSON.parse(o); o = JSON.parse(o); } catch {} return o; };
+  const hA = await tick(), tA = Date.now();
 
   // Enter Live mode on load, with one live tab on the fixture.
   await ab([...HOST, 'open', `${V}/manifest.webmanifest`]);
@@ -50,10 +53,9 @@ try {
   const st = await until(async () => { const s = await get('/api/live/status'); return s.attached && s.frameUrl ? s : null; });
   check('bridge attaches to the viewer page and finds the live frame', st?.frameUrl === `${F}/`, st);
 
-  console.log('one GPU: headless session parked while Live is on');
-  check('parked URL remembered (with params and hash)', st?.parked?.url === `${F}/?p=1#h`, st?.parked);
-  check('headless session is on about:blank', (await ab([...PARK, 'get', 'url'])) === 'about:blank');
-  check('headless screencast is off', /disabled/i.test(await ab([...PARK, 'stream', 'status'])));
+  console.log('one GPU: the headless page is frozen while Live is on');
+  const mode1 = await get('/api/mode');
+  check('mode is live', mode1.mode === 'live', mode1);
   const idle = await evalHost(`JSON.stringify({ws: typeof ws === 'undefined' ? null : (ws && ws.readyState), hidden: document.getElementById('screen').classList.contains('hidden'), streamOn})`);
   check('viewer: no stream socket, canvas hidden', (() => { const o = JSON.parse(idle); return o.ws == null && o.hidden && o.streamOn === false; })(), idle);
 
@@ -80,19 +82,47 @@ try {
   await post('/api/live/nav', { op: 'forward' });
   await until(async () => (await get('/api/live/status')).frameUrl === deep, 6000);
 
-  console.log('WebGL fallback');
-  const fb = await post('/api/live/fallback', { on: true });
-  check('fallback loads the live page headless', fb.ok && (await ab([...PARK, 'get', 'url'])) === deep, fb);
-  await post('/api/live/fallback', { on: false });
-  check('...and returns it to blank', (await ab([...PARK, 'get', 'url'])) === 'about:blank');
+  console.log('borrowing (agent needs its headless page)');
+  await post('/api/live/eval', { expression: 'window.__n=0;(function f(){__n++;requestAnimationFrame(f)})();1' });
+  await sleep(500);
+  const l0 = (await post('/api/live/eval', { expression: '__n' })).value;
+  const b1 = await post('/api/mode/borrow', { owner: 'test-a', ms: 20000 });
+  check('borrow accepted', b1.ok && b1.mode === 'borrowed', b1);
+  const hB = await tick(), tB = Date.now();
+  check(`headless page was frozen during Live (${Math.round((tB - tA) / 1000)}s): rAF barely moved`, hB[0] - hA[0] < 30 && hB[1] - hA[1] < 10, { hA, hB });
+  const b2 = await post('/api/mode/borrow', { owner: 'test-b' });
+  check('a second borrower is refused', !b2.ok && /already borrowed by test-a/.test(b2.reason), b2);
+  check('the live page refuses evals while paused (no hang)', /paused/.test((await post('/api/live/eval', { expression: '1' })).reason || ''));
+  await sleep(2000); const hC = await tick();
+  check('headless page runs during the borrow', hC[0] - hB[0] > 30, { hB, hC });
+  check('only the owner can give back', !(await post('/api/mode/return', { owner: 'test-b' })).ok);
+  const r1 = await post('/api/mode/return', { owner: 'test-a' });
+  check('give back -> live', r1.ok && r1.mode === 'live', r1);
+  const l1 = (await post('/api/live/eval', { expression: '__n' })).value;
+  check('live page was paused during the borrow (~2.5s)', l1 - l0 < 30, { l0, l1 });
+  await sleep(1500); const l2 = (await post('/api/live/eval', { expression: '__n' })).value;
+  check('live page running again', l2 - l1 > 30, { l1, l2 });
+  check('the paused note is gone', (await evalHost(`String(!!document.getElementById('liveNote'))`)) === 'false');
+  await post('/api/mode/borrow', { owner: 'crashy', ms: 1500 });
+  check('a borrow nobody returns times out back to live', !!(await until(async () => (await get('/api/mode')).mode === 'live', 6000)));
 
   console.log('leaving Live mode');
+  await sleep(1000);
   await evalHost(`live.exit(); 1`);
-  const restored = await until(async () => (await ab([...PARK, 'get', 'url'])) === deep, 12000);
-  check('headless session gets the live page back (URL and params)', !!restored, await ab([...PARK, 'get', 'url']));
-  check('its stream is back on its port', (await ab([...PARK, 'stream', 'status'])).includes(`:${PARK_STREAM}`));
+  check('mode back to stream', !!(await until(async () => (await get('/api/mode')).mode === 'stream', 8000)));
+  const a0 = await tick(); await sleep(1500); const a1 = await tick();
+  check('headless page resumed where it was (URL with params, scroll, JS state)', a0[2] === `${F}/?p=1#h` && a0[3] === 321 && a0[0] >= hC[0], { hC, a0 });
+  check('...and is ticking again at speed', a1[0] - a0[0] > 30, { a0, a1 });
+  const log = await import('node:fs').then(fs => fs.readFileSync(join(tmp, 'modes.log'), 'utf8'));
+  check('mode changes are logged', /stream -> live/.test(log) && /live -> borrowed/.test(log) && /timed out/.test(log) && /live -> stream/.test(log), log);
+
+  console.log('crash safety');
+  const crash = `import('${ROOT}headless.mjs').then(async m => { await m.freezeHeadless(); process.exit(0); })`;
+  await new Promise(r => execFile(process.execPath, ['-e', crash], { env: { ...process.env, HEADLESS_AB_ARGS: PARK.join(' ') }, timeout: 30000 }, r));
+  const c0 = await tick(); await sleep(1500); const c1 = await tick();
+  check('a process that froze the headless page and died leaves it running', c1[0] - c0[0] > 30, { c0, c1 });
   const s3 = await get('/api/live/status');
-  check('bridge detached', !s3.attached && !s3.parked, s3);
+  check('bridge detached', !s3.attached, s3);
 } catch (e) {
   check('test ran without throwing', false, String(e?.stack || e));
 } finally {

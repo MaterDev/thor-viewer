@@ -98,9 +98,18 @@ export const modes = createModes({
     emit({ type: 'mode', mode: 'borrowed', until });
     borrowNotice(until);
     await new Promise(r => setTimeout(r, 250));                 // let the note paint before the freeze
-    if (S.cdp) await S.cdp.send('Page.setWebLifecycleState', { state: 'frozen' });
+    // Debugger.pause, not Page.setWebLifecycleState: see headless.mjs (lifecycle freeze leaves the page hidden).
+    for (const sess of [null, S.liveSession].filter((x, i) => i === 0 || x)) {
+      if (!S.cdp) break;
+      await S.cdp.send('Debugger.enable', {}, sess); await S.cdp.send('Debugger.pause', {}, sess);
+    }
   },
-  resumeLive: async () => { run('termux-notification-remove', ['thor-live-borrow'], 5000); if (S.cdp) await S.cdp.send('Page.setWebLifecycleState', { state: 'active' }); },
+  resumeLive: async () => { run('termux-notification-remove', ['thor-live-borrow'], 5000); 
+    for (const sess of [null, S.liveSession].filter((x, i) => i === 0 || x)) {
+      if (!S.cdp) break;
+      await S.cdp.send('Debugger.resume', {}, sess); await S.cdp.send('Debugger.disable', {}, sess);
+    }
+  },
   onChange: snap => { emit({ type: 'mode', ...snap }); writeFile(MODE_FILE, snap.mode + '\n').catch(() => {}); },
   log: line => { console.log(line); appendFile(MODE_LOG, line + '\n').catch(() => {}); },
 });
@@ -241,6 +250,7 @@ function scheduleLeave(why) {
 
 export async function evalInFrame(expression) {
   if (!attached()) return { ok: false, reason: 'not attached' };
+  if (modes.get().mode === 'borrowed') return { ok: false, reason: 'the live page is paused while an agent borrows the headless page' };
   let ctx = S.liveSession ? [...S.contexts.entries()].find(([k]) => k.startsWith(S.liveSession + ':')) : null;
   let where = ctx ? { sessionId: S.liveSession, contextId: Number(ctx[0].split(':')[1]) } : contextFor(S.liveFrameId);
   if (!where) return { ok: false, reason: 'the live frame has no JavaScript context yet' };
