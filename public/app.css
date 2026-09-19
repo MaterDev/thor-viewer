@@ -82,12 +82,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #urlbar { display: none; align-items: center; gap: 2px; padding: 3px; margin: 0; width: min(560px, calc(100vw - 120px)); border-radius: var(--radius-pill);
   transform-origin: right center; transition: transform .2s ease, opacity .15s ease; }
 #urlbar .ib { border-radius: var(--radius-pill); }
-/* open: the bar takes the whole joined pill's place (it has its own refresh inside, next to the address) */
-#urlwrap.open { right: 8px; }
-#urlwrap.open #urlbar { display: flex; }
+/* open: the bar replaces the address half of the joined pill; the refresh half NEVER hides (Key), so the
+   field ends right beside it. The in-bar duplicate refresh is dropped and collapse moves to the left end. */
+#urlwrap.open #urlbar { display: flex; border-radius: var(--radius-pill) 0 0 var(--radius-pill); border-right-color: rgba(255, 255, 255, .10); }
 @starting-style { #urlwrap.open #urlbar { transform: scaleX(.2); opacity: 0; } }
-#urlwrap.open #urlBtn, #urlwrap.open ~ #refreshBtn { display: none; }
-#urlbar #urlReload { order: 3; }
+#urlwrap.open #urlBtn, #urlbar #urlReload { display: none; }
+#urlbar #urlClose { order: -1; }
 #url { flex: 1; min-width: 0; height: 38px; background: rgba(255, 255, 255, .10); color: var(--ink); border: 1px solid var(--glass-edge); border-radius: var(--radius-pill);
   padding: 0 14px; font: 14px var(--sans); text-shadow: var(--halo); }
 #url:focus { outline: none; box-shadow: 0 0 0 2px var(--ring); }
