@@ -13,7 +13,7 @@
     "type": "git",
     "url": "git+https://github.com/MaterDev/thor-viewer.git"
   },
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "bugs": {
     "url": "https://github.com/MaterDev/thor-viewer/issues"

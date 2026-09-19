@@ -26,6 +26,9 @@ understand it, run it, and test it on a real device before opening a PR, and say
 unreviewed generated code, large rewrites, restyles, and "feature dumps" will likely be closed without a detailed
 review.
 
+## License
+Contributions are accepted under the same terms as the project (PolyForm Noncommercial 1.0.0, see LICENSE).
+
 ## Be kind
 Be respectful and patient. Clear, careful reports and small tested changes are the best way to help.
 

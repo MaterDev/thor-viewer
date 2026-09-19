@@ -98,3 +98,11 @@ The Thor's built-in pad reports as a non-standard "Odin Controller" with variabl
 - Single shared session: the viewer, Claude, and the test suite all drive the same browser.
 </content>
 </invoke>
+
+## License
+
+Thor Viewer is **source-available for non-commercial use** under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+You may use, study and modify it for any non-commercial purpose, as long as you keep the `Required Notice`
+(attribution to MaterDev and this repository) with any copy. **Commercial use is not permitted** without written
+permission from the author. Note: GitHub lets anyone fork a public repository; forks are still bound by this license.
+
