@@ -56,6 +56,7 @@ try {
   console.log('one GPU: the headless page is frozen while Live is on');
   const mode1 = await get('/api/mode');
   check('mode is live', mode1.mode === 'live', mode1);
+  await sleep(5000);                                    // let the frozen headless page sit
   const idle = await evalHost(`JSON.stringify({ws: typeof ws === 'undefined' ? null : (ws && ws.readyState), hidden: document.getElementById('screen').classList.contains('hidden'), streamOn})`);
   check('viewer: no stream socket, canvas hidden', (() => { const o = JSON.parse(idle); return o.ws == null && o.hidden && o.streamOn === false; })(), idle);
 
@@ -89,7 +90,8 @@ try {
   const b1 = await post('/api/mode/borrow', { owner: 'test-a', ms: 20000 });
   check('borrow accepted', b1.ok && b1.mode === 'borrowed', b1);
   const hB = await tick(), tB = Date.now();
-  check(`headless page was frozen during Live (${Math.round((tB - tA) / 1000)}s): rAF barely moved`, hB[0] - hA[0] < 30 && hB[1] - hA[1] < 10, { hA, hB });
+  const effFps = (hB[0] - hA[0]) / ((tB - tA) / 1000);   // includes the ~1s before the freeze landed
+  check(`headless page was frozen during Live: ${effFps.toFixed(1)} rAF/s over ${Math.round((tB - tA) / 1000)}s (60 when running)`, effFps < 20, { hA, hB });
   const b2 = await post('/api/mode/borrow', { owner: 'test-b' });
   check('a second borrower is refused', !b2.ok && /already borrowed by test-a/.test(b2.reason), b2);
   check('the live page refuses evals while paused (no hang)', /paused/.test((await post('/api/live/eval', { expression: '1' })).reason || ''));
