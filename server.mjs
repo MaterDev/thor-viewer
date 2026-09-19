@@ -7,7 +7,8 @@ import { readFile, stat, appendFile, readdir, writeFile } from 'node:fs/promises
 import { execFile } from 'node:child_process';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as live from './live-bridge.mjs';   // Live Page Mode (CDP to the viewer's own page)
+import * as live from './live-bridge.mjs';
+import { applyPins } from './public/pins.js';   // pinned tabs (shared with the page)   // Live Page Mode (CDP to the viewer's own page)
 
 const PORT = Number(process.env.PORT || 4850);
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
@@ -77,6 +78,13 @@ function cleanShared(s) {
 }
 async function readShared() { try { return cleanShared(JSON.parse(await readFile(TABS_FILE, 'utf8'))) || { tabs: [], active: null, next: 1 }; } catch { return { tabs: [], active: null, next: 1 }; } }
 async function writeShared(s) { await writeFile(TABS_FILE, JSON.stringify(s)); }
+// pinned tabs: [{ id, url, title }] in pin order (public/pins.js explains the matching)
+const PINS_FILE = process.env.THOR_PINS_FILE || '/home/key/.cache/thor-viewer-pins.json';
+async function readPins() { try { const p = JSON.parse(await readFile(PINS_FILE, 'utf8')); return Array.isArray(p) ? p : []; } catch { return []; } }
+async function writePins(p) { await writeFile(PINS_FILE, JSON.stringify(p.slice(0, 20))); }
+async function pinnedView(tabs) {                              // tabs -> pinned-first order, persisting pin moves
+  const r = applyPins(await readPins(), tabs); if (r.changed) await writePins(r.pins); return r.order;
+}
 async function sharedFromHeadless(prev) {
   const out = await agentBrowserJson(['tab', 'list']), list = out?.data?.tabs;
   if (!Array.isArray(list)) return prev;                        // headless not answering: keep what we have
@@ -185,6 +193,7 @@ createServer(async (req, res) => {
   if (path === '/api/shared-tabs' && req.method === 'GET') {
     let s = await readShared();
     if (live.modes.get().mode === 'stream' && !new URL(req.url, 'http://x').searchParams.has('raw')) s = await sharedFromHeadless(s);
+    s = { ...s, tabs: await pinnedView(s.tabs) };                // each tab says `pinned`, pinned ones first
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' }); return res.end(JSON.stringify(s));
   }
   if (path.startsWith('/api/shared-tabs') && req.method === 'POST') {
@@ -197,6 +206,48 @@ createServer(async (req, res) => {
       ok = !a || !/^https?:\/\//.test(a.url) ? true : await runAgentBrowser(['open', a.url]);
     }
     res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok }));
+  }
+  // ---------- pinned tabs ----------
+  // GET /api/pins -> [{ id, url, title }]. POST /api/pins { op: 'pin'|'unpin', id, url, title }.
+  // GET /api/pins/active -> { pinned, url }: is the tab agents would act on pinned? (gate + start.sh ask this)
+  if (path === '/api/pins' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' }); return res.end(JSON.stringify(await readPins()));
+  }
+  if (path === '/api/pins' && req.method === 'POST') {
+    if (!/^application\/json/.test(req.headers['content-type'] || '')) { res.writeHead(415); return res.end(); }
+    let body = ''; for await (const c of req) body += c;
+    let p = {}; try { p = JSON.parse(body || '{}'); } catch {}
+    let pins = await readPins(), ok = false;
+    const id = typeof p.id === 'string' ? p.id : null, url = typeof p.url === 'string' ? p.url : '';
+    const r = applyPins(pins, [{ id, url }]), mine = r.order[0]?.pinned ? r.pins.findIndex(q => q.id === id) : -1;
+    if (p.op === 'pin' && id && /^https?:\/\//.test(url)) { if (mine < 0) pins.push({ id, url, title: String(p.title || '').slice(0, 200) }); ok = true; }
+    else if (p.op === 'unpin' && id) { pins = mine < 0 ? pins : r.pins.filter((_, i) => i !== mine); ok = true; }
+    if (ok) await writePins(pins);
+    res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok, pins }));
+  }
+  // POST /api/pins/restore (Stream only): reopen pinned tabs that aren't open (after the headless browser
+  // restarted), in pin order; a blank active tab is reused for the first one. start.sh calls this.
+  if (path === '/api/pins/restore' && req.method === 'POST') {
+    let opened = 0;
+    if (live.modes.get().mode === 'stream') {
+      const list = (await agentBrowserJson(['tab', 'list']))?.data?.tabs || [];
+      const tabs = list.map(t => ({ id: t.tabId, url: t.url, title: t.title }));
+      const pins = await readPins(), have = applyPins(pins, tabs).order.filter(t => t.pinned).map(t => t.url);
+      let blank = list.find(t => t.active && !/^https?:\/\//.test(t.url || ''));
+      for (const p of pins) {
+        if (have.includes(p.url) || !/^https?:\/\//.test(p.url)) continue;
+        if (await runAgentBrowser(blank ? ['open', p.url] : ['tab', 'new', p.url])) opened++;
+        blank = null;
+      }
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, opened }));
+  }
+  if (path === '/api/pins/active' && req.method === 'GET') {
+    let s = await readShared();
+    if (live.modes.get().mode === 'stream') s = await sharedFromHeadless(s);
+    const tabs = await pinnedView(s.tabs), a = tabs.find(t => t.id === s.active);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+    return res.end(JSON.stringify({ pinned: !!a?.pinned, url: a?.url || '', title: a?.title || '' }));
   }
   if (path === '/api/tabs' && req.method === 'GET') {
     const out = await agentBrowserJson(['tab', 'list']);

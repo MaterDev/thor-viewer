@@ -218,7 +218,7 @@ function setTabs(list) {
   if (drawer.classList.contains('open')) renderTabs();
 }
 const openDrawer = async () => {
-  drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs();
+  drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs(); loadPins();
   if (!tabs.length && !isLive()) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
 };
 const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
@@ -226,11 +226,29 @@ const toggleDrawer = () => drawer.classList.contains('open') ? closeDrawer() : o
 $('tabsBtn').onclick = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 scrim.onclick = closeDrawer;
 $('tabNew').onclick = () => { nav.tabNew(); if (isLive()) { closeDrawer(); openUrlBar(); } };
+// Pinned tabs (public/pins.js): kept on the server, shown first with a filled pin; agents leave them alone.
+// The module and the pin list load on the first drawer open; a pin tap saves and redraws.
+let pins = null, applyPins = null;
+async function loadPins() {
+  try {
+    if (!applyPins) applyPins = (await import('./pins.js')).applyPins;
+    pins = await (await fetch('/api/pins', { cache: 'no-store' })).json();
+  } catch { pins = pins || []; }
+  if (drawer.classList.contains('open')) renderTabs();
+}
+async function togglePin(t) {
+  const r = await fetch('/api/pins', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ op: t.pinned ? 'unpin' : 'pin', id: String(t.id), url: t.url || '', title: t.title || '' }) });
+  const j = await r.json().catch(() => null);
+  if (!j?.ok) { addLog('warn', 'pin: only a loaded web page can be pinned'); return; }
+  pins = j.pins; renderTabs();
+}
 function renderTabs() {
   const list = $('tabList'); list.textContent = '';
   if (!tabs.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'no tabs'; list.appendChild(li); return; }
-  for (const t of tabs) {
-    const li = document.createElement('li'); if (t.active) li.classList.add('active');
+  const shown = applyPins && pins ? applyPins(pins, tabs).order : tabs;
+  for (const t of shown) {
+    const li = document.createElement('li'); if (t.active) li.classList.add('active'); if (t.pinned) li.classList.add('pinned');
     const body = document.createElement('div'); body.className = 't';
     const title = document.createElement('span'); title.className = 'title'; title.textContent = t.title || t.url || t.id;
     const u = document.createElement('span'); u.className = 'u'; u.textContent = t.url || '';
@@ -246,7 +264,12 @@ function renderTabs() {
     x.onclick = e => { e.stopPropagation(); arm(true); };
     ask.querySelector('.yes').onclick = e => { e.stopPropagation(); arm(false); nav.tabClose(t.id); };
     ask.querySelector('.no').onclick = e => { e.stopPropagation(); arm(false); };
-    li.append(body, x, ask); list.appendChild(li);
+    const pin = document.createElement('button'); pin.className = 'ib pin'; pin.title = t.pinned ? 'Unpin tab' : 'Pin tab';
+    pin.setAttribute('aria-pressed', String(!!t.pinned));
+    pin.innerHTML = `<svg><use href="icons.svg#${t.pinned ? 'pin--filled' : 'pin'}"/></svg>`;
+    pin.onclick = e => { e.stopPropagation(); togglePin(t); };
+    if (t.pinned) x.classList.add('hidden');                // unpin first to close a pinned tab
+    li.append(body, pin, x, ask); list.appendChild(li);
   }
 }
 

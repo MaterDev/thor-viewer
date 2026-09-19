@@ -42,6 +42,39 @@ modeinfo() {
   case "$mode" in live|borrowed) ;; *) mode=stream;; esac
 }
 modeinfo
+# The command word: the first argument that is not an option (or an option's value).
+cmdi=-1; i=0; skip=0
+for a in "${args[@]}"; do
+  if [ "$skip" = 1 ]; then skip=0
+  else case "$a" in
+    --session|--profile|--cdp|--executable-path|--extension|--init-script|--enable|--allowed-domains|--args|--user-agent|--timeout) skip=1 ;;
+    -*) ;;
+    *) cmdi=$i; break ;;
+  esac; fi
+  i=$((i + 1))
+done
+cmd=""; [ "$cmdi" -ge 0 ] && cmd="${args[$cmdi]}"
+rest=("${args[@]:$((cmdi + 1))}")
+
+# ---------- pinned tabs (Key, 2026-09-19): never navigate or close a pinned tab ----------
+# Stream: `open` on a pinned tab opens a new tab instead. Live: refused (the live page is Key's). Pins live in the viewer.
+pinned=0
+case "$cmd" in open|goto|navigate|tab)
+  if [ "$cmd" != tab ] || [ "${rest[0]:-}" = close -a -z "${rest[1]:-}" ]; then
+    case "$(curl -s -m 2 "$VIEWER/api/pins/active" 2>/dev/null)" in *'"pinned":true'*) pinned=1;; esac
+  fi ;;
+esac
+if [ "$pinned" = 1 ]; then
+  case "$cmd" in
+    open|goto|navigate)
+      if [ "$mode" = stream ]; then
+        echo "agent-browser: the current tab is pinned; opening in a new tab instead" >&2
+        exec "$REAL" "${args[@]:0:$cmdi}" tab new "${rest[@]}"
+      fi
+      echo "agent-browser (Live mode): the current tab is pinned; not navigating it (ask Key, or add --headless)" >&2; exit 77 ;;
+    *) echo "agent-browser: the current tab is pinned; not closing it (Key unpins it in the viewer drawer)" >&2; exit 77 ;;
+  esac
+fi
 [ "$mode" = stream ] && exec "$REAL" "${args[@]}"
 
 post() { curl -s -m "${3:-10}" -X POST -H 'content-type: application/json' -d "$2" "$VIEWER$1"; }
@@ -74,19 +107,7 @@ if [ "$mode" = borrowed ]; then                          # someone is briefly on
 fi
 [ -n "$viewerTargetId" ] || { say "Live mode is on but the agent is not attached to the viewer page (see the viewer console). Add --headless to use your own browser."; exit 69; }
 
-# The command word: the first argument that is not an option (or an option's value).
-cmdi=-1; i=0; skip=0
-for a in "${args[@]}"; do
-  if [ "$skip" = 1 ]; then skip=0
-  else case "$a" in
-    --session|--profile|--cdp|--executable-path|--extension|--init-script|--enable|--allowed-domains|--args|--user-agent|--timeout) skip=1 ;;
-    -*) ;;
-    *) cmdi=$i; break ;;
-  esac; fi
-  i=$((i + 1))
-done
-cmd=""; [ "$cmdi" -ge 0 ] && cmd="${args[$cmdi]}"
-rest=("${args[@]:$((cmdi + 1))}")
+
 
 case "$cmd" in
   open|goto|navigate)
