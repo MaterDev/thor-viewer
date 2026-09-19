@@ -84,10 +84,10 @@ async function hotZonePaths() {
 // Thermal zones by type, listed once; each /api/temp then reads only the few files it needs (the client polls
 // only while the stats bar is shown). body = xo-therm (board; this device has no skin zone), cpu = max of
 // cpu-* / cpuss-*, gpu = max of gpuss-*. All in C (the client shows F).
-let zoneMap = null;
-async function zones() {
-  if (zoneMap) return zoneMap;
-  zoneMap = { battery: [], body: [], cpu: [], gpu: [] };
+let zonesP = null;                                       // a promise, so concurrent first calls share one complete scan
+function zones() { return zonesP ??= scanZones(); }
+async function scanZones() {
+  const zoneMap = { battery: [], body: [], cpu: [], gpu: [] };
   try {
     for (const z of await readdir('/sys/class/thermal')) {
       if (!z.startsWith('thermal_zone')) continue;
