@@ -18,14 +18,14 @@
 <div id="modeSlot"><button id="heatBtn" class="top-pill" title="Heat guard: on" aria-label="Heat guard"><span><svg><use href="icons.svg#temperature--hot"/></svg><b id="heatLeft" class="hidden"></b></span></button><button id="modeBtn" class="top-pill" title="Mode"><span><b data-m="stream">Stream</b><b data-m="live">Live</b></span></button></div>
 <div id="stats" aria-hidden="true">–</div>
 
-<!-- top-left: tabs drawer -->
-<button id="tabsBtn" class="ib corner" title="Tabs"><svg><use href="icons.svg#menu"/></svg></button>
+<!-- top-left: the drawer (tabs, keyboard, console, controls, settings, full screen) -->
+<button id="tabsBtn" class="ib corner" title="Drawer" aria-label="Drawer"><svg><use href="icons.svg#menu"/></svg></button>
 <div id="scrim" class="hidden"></div>
 <aside id="drawer" class="panel">
-  <header><span class="label">Tabs</span><button id="tabNew" class="ib" title="New tab"><svg><use href="icons.svg#add"/></svg></button></header>
+  <header><span class="label">Drawer</span><button id="tabNew" class="ib" title="New tab"><svg><use href="icons.svg#add"/></svg></button></header>
   <ul id="tabList"></ul>
   <footer>
-    <button id="reload" class="ib" title="Reload"><svg><use href="icons.svg#renew"/></svg></button>
+    <button id="settingsBtn" class="ib" title="Settings" aria-label="Settings"><svg><use href="icons.svg#settings"/></svg></button>
     <button id="kbd" class="ib" title="Keyboard"><svg><use href="icons.svg#keyboard"/></svg></button>
     <button id="con" class="ib" title="Console"><svg><use href="icons.svg#terminal"/></svg><b id="badge" class="hidden">0</b></button>
     <button id="help" class="ib" title="Controls"><svg><use href="icons.svg#help"/></svg></button>
@@ -55,14 +55,14 @@
     <dl>
       <dt>Tap</dt><dd>click on the page</dd>
       <dt>Drag</dt><dd>scroll</dd>
-      <dt>Top-left icon</dt><dd>tabs drawer</dd>
+      <dt>Top-left icon</dt><dd>drawer</dd>
       <dt>Top-right icon</dt><dd>address bar</dd>
     </dl>
     <h3>Controller</h3>
     <dl>
       <dt>A</dt><dd>tap where the pointer is</dd>
       <dt>B</dt><dd>back</dd>
-      <dt>X</dt><dd>tabs drawer</dd>
+      <dt>X</dt><dd>drawer</dd>
       <dt>Y</dt><dd>address bar</dd>
       <dt>L1 / R1</dt><dd>page up / down</dd>
       <dt>D-pad</dt><dd>scroll</dd>
@@ -73,6 +73,11 @@
     <button id="statsToggle" class="btn">Hide stats bar</button>
     <button id="calibStart" class="btn">Calibrate controller</button>
   </div>
+</div>
+<!-- Settings: built on first open; display:none when closed (like Controls) -->
+<div id="settings" class="panel hidden" role="dialog" aria-label="Settings">
+  <header><span class="label">Settings</span><button id="settingsClose" class="ib" title="Close"><svg><use href="icons.svg#close"/></svg></button></header>
+  <div id="settingsBody" class="cbody"></div>
 </div>
 <div id="calib" class="panel hidden">
   <header><span class="label">Calibrate</span><button id="calibCancel" class="ib" title="Cancel"><svg><use href="icons.svg#close"/></svg></button></header>

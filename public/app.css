@@ -148,6 +148,23 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #stats .v { color: var(--ink); font-weight: 600; }
 #stats .sep { color: var(--ink-muted); opacity: .6; }
 #stats.hidden { display: none; }
+
+/* Theme "solid": the same muted palette as the glass, but opaque surfaces and NO backdrop-filter anywhere.
+   A theme only overrides tokens, so future colour themes slot in the same way. */
+[data-theme="solid"] {
+  --glass-blur: none;
+  --glass-tint: rgba(236, 243, 255, 0);
+  --glass-scrim: rgb(40, 43, 49);
+  --glass-scrim-light: rgb(48, 51, 58);
+  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, 0) 45%);
+  --glass-edge: rgba(255, 255, 255, .14);
+  --halo: none;
+}
+#settings { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 40; width: min(420px, 92vw); max-height: 84vh; display: flex; flex-direction: column; }
+#settings .cbody { overflow-y: auto; padding: 4px 18px 16px; }
+#settings h3 { margin: 16px 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-muted); }
+#settings .crow .btn { margin-top: 6px; }
+#settings .note { margin: 12px 0 0; color: var(--ink-muted); font-size: 13px; line-height: 1.45; }
 /* Room at top centre for a small mode toggle (Stream / Live, track viewer-live-page-mode): give it class
    .top-pill and place it beside #stats; it shares the glass recipe and keeps a 48px hit area. */
 .top-pill { position: fixed; top: max(0px, env(safe-area-inset-top)); z-index: 19; height: 48px; display: flex; align-items: center; padding: 0 4px;

@@ -10,15 +10,15 @@ A full-screen live view of the browser that Claude Code drives on an **AYN Thor*
 - **Lets you take over.** Tap, drag to scroll, and type (the keyboard button opens Android's keyboard). The built-in controller works too: left stick and D-pad scroll, right stick moves a pointer, and the face and shoulder buttons tap, go back, and page up and down.
 - **Stats bar.** A thin, translucent strip centered along the top reports the live stream: frames per second, resolution, bandwidth, and the device temperature (e.g. `53 fps · 832×396 · 5.7 Mb/s · 38.0°C`). It measures what you are actually seeing *through* the viewer, independent of whatever the page inside is doing; the temperature (battery, read server-side from `/sys`) turns amber then red as the device warms. Hide it from the Controls panel.
 - **Address bar** in the top-right corner that expands leftwards, with back and forward. Type an address or search terms; recent pages you visited are offered below and filter as you type.
-- **Tabs drawer** in the top-left corner: switch, open, and close tabs. Closing asks for confirmation first.
+- **Drawer** in the top-left corner: switch, open, and close tabs (closing asks for confirmation first), plus settings (themes: Standard glass or Solid), keyboard, console, controls and full screen.
 - **Console panel** with the page's console output and uncaught errors, with an error badge while it is closed.
 - **Installs as an app.** Chrome's *Add to Home screen* opens it with no browser UI at all; a full-screen toggle is there for the plain-browser case.
 
 The interface uses [Carbon](https://carbondesignsystem.com/) icons and a restrained dark, high-contrast style.
 
-| Tabs drawer | Address bar | Console |
+| Drawer | Address bar | Console |
 | --- | --- | --- |
-| ![Tabs drawer](docs/tabs.png) | ![Address bar](docs/address.png) | ![Console panel](docs/console.png) |
+| ![Drawer](docs/tabs.png) | ![Address bar](docs/address.png) | ![Console panel](docs/console.png) |
 
 ## The graphics stack it belongs to
 

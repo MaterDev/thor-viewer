@@ -1,6 +1,18 @@
 // Thor Viewer: full-screen live view of the agent-browser "thor" session.
 // Connects straight to agent-browser's stream (JPEG frames + input injection);
 // tabs, navigation and page errors go through the small server API.
+// ---------- theme (applied first): Standard = frosted glass (default); Solid = same palette, opaque, no blur.
+// A theme is a token swap: <html data-theme="solid"> overrides the glass tokens in app.css. ?theme= overrides
+// for testing (not persisted); the Settings choice persists in localStorage.
+const THEMES = ['standard', 'solid'];
+function currentTheme() { return document.documentElement.dataset.theme || 'standard'; }
+function setTheme(t, persist) {
+  if (!THEMES.includes(t)) return;
+  if (t === 'standard') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  if (persist) try { localStorage.setItem('thorTheme', t); } catch {}
+}
+{ let t = null; try { t = new URLSearchParams(location.search).get('theme') || localStorage.getItem('thorTheme'); } catch {} if (t) setTheme(t, false); }
+
 const STREAM = 'ws://127.0.0.1:9223/?pacing=ack&maxFps=60';
 const $ = id => document.getElementById(id);
 const canvas = $('screen'), ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
@@ -185,7 +197,7 @@ $('urlbar').onsubmit = e => {
   closeUrlBar(); nav.open(url);
 };
 
-// ---------- tabs drawer (top left) ----------
+// ---------- the drawer (top left): tabs plus the footer tools; ids keep the old 'tabs' names ----------
 // The stream sends the full tab list many times a second; keep a copy and redraw only when it changes.
 let tabs = [], tabsKey = '';
 function setTabs(list) {
@@ -228,7 +240,21 @@ function renderTabs() {
 }
 
 // ---------- tools (drawer footer) ----------
-$('reload').onclick = () => { nav.go('reload'); closeDrawer(); };
+// ---------- settings (drawer footer gear): themes; the body is built on first open ----------
+$('settingsBtn').onclick = () => { buildSettings(); $('settings').classList.remove('hidden'); closeDrawer(); };
+$('settingsClose').onclick = () => $('settings').classList.add('hidden');
+function buildSettings() {
+  const body = $('settingsBody');
+  if (body.childElementCount) { markTheme(); return; }
+  body.innerHTML = '<h3>Theme</h3><div class="crow" role="radiogroup" aria-label="Theme"></div><p class="note">Standard is frosted glass. Solid uses the same muted colours with opaque surfaces and no blur (lighter on the GPU).</p>';
+  for (const [id, label] of [['standard', 'Standard'], ['solid', 'Solid']]) {
+    const b = document.createElement('button'); b.className = 'btn'; b.dataset.theme = id; b.textContent = label; b.setAttribute('role', 'radio');
+    b.onclick = () => { setTheme(id, true); markTheme(); };
+    body.querySelector('.crow').append(b);
+  }
+  markTheme();
+}
+function markTheme() { for (const b of $('settingsBody').querySelectorAll('[data-theme]')) { const on = b.dataset.theme === currentTheme(); b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); } }
 $('kbd').onclick = () => { closeDrawer(); key.focus(); };
 const toggleFullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
 $('fs').onclick = () => { toggleFullscreen(); closeDrawer(); };
@@ -315,7 +341,7 @@ key.addEventListener('beforeinput', e => {
 
 // ---------- device controller (Gamepad API) and hardware keys ----------
 // First-guess layout: left stick / D-pad scroll, right stick moves the pointer, A taps, B goes back,
-// LB/RB page up/down, Start opens the address bar, Select opens the tabs drawer.
+// LB/RB page up/down, Start opens the address bar, Select opens the drawer.
 // Everything received is logged to the server so the real mapping can be read off the log.
 const logInput = (() => { let last = 0; return data => { const now = Date.now(); if (now - last < 150) return; last = now; api('/api/input-log', data); }; })();
 function showCursor() { cursor.visible = true; clearTimeout(cursor.timer); cursor.timer = setTimeout(() => { cursor.visible = false; draw(); }, 2500); }
