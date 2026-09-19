@@ -183,7 +183,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 /* ---------- Live Page Mode (one block) ---------- */
 /* Stream / Live toggle: a segmented pill in the top-centre slot, left of the stats bar (the seam is the
    centre line). 48px hit area; the visible pill lines up with #stats. */
-#modeSlot { position: fixed; top: 0; right: calc(50% + 4px); z-index: 19; display: flex; align-items: flex-start; }
+#modeSlot { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 19; display: flex; align-items: flex-start; gap: 2px; }   /* one centred group: heat · temps · mode · stats */
+#modeSlot #stats { position: static; transform: none; margin-top: 6px; max-width: none; }
 #modeSlot .top-pill { position: static; }
 #modeBtn, #heatBtn { align-items: flex-start; padding: 6px 0 0; cursor: pointer; }
 #heatBtn { min-width: 48px; justify-content: flex-end; padding-right: 4px; }
@@ -195,7 +196,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #modeBtn > span { gap: 0; padding: 0 2px; }
 #modeBtn b { font-weight: 500; padding: 2px 9px; border-radius: var(--radius-pill); color: var(--ink-muted); }
 #modeBtn[data-mode="stream"] b[data-m="stream"], #modeBtn[data-mode="live"] b[data-m="live"] { background: var(--selected); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--ring); }
-#stats { left: calc(50% + 4px); transform: none; max-width: calc(50vw - 112px); }
+
 #liveFrame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; z-index: 1; }
 #liveEmpty { position: fixed; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; color: var(--ink-muted); font: 13px var(--sans); }
 #status { z-index: 5; }
@@ -206,11 +207,23 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 
 /* temperatures (°F) beside the heat-guard thermometer, left of the Stream|Live pill; readouts only, the
    thermometer is the button (48px hit area). Narrow screens keep battery + CPU. */
-#temps { align-self: flex-start; margin: 6px 4px 0 0; height: 22px; display: flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: var(--radius-pill);
+#temps { margin: 6px 4px 0 0; height: 22px; display: flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: var(--radius-pill);
   background: var(--glass-sheen), linear-gradient(var(--glass-tint), var(--glass-tint)), linear-gradient(var(--glass-scrim), var(--glass-scrim));
   border: 1px solid var(--glass-edge); box-shadow: var(--glass-specular), var(--glass-shadow); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   font: 600 11px var(--sans); font-variant-numeric: tabular-nums; color: var(--ink); text-shadow: var(--halo); white-space: nowrap; }
 #temps:empty, #temps.hidden { display: none; }
+#tempWrap { position: relative; align-self: flex-start; display: flex; }
+#temps { cursor: pointer; position: relative; }
+#temps::before { content: ''; position: absolute; inset: -13px -4px; }   /* ≥48px tap area around the thin pill */
+#tempMenu { position: absolute; top: 34px; left: 50%; transform: translateX(-50%); z-index: 30; min-width: 340px; padding: 4px;
+  border-radius: var(--radius-pane); background: var(--glass-sheen), linear-gradient(var(--glass-tint), var(--glass-tint)), linear-gradient(var(--glass-scrim), var(--glass-scrim));
+  border: 1px solid var(--glass-edge); box-shadow: var(--glass-specular), var(--glass-shadow); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  font: 13px var(--sans); color: var(--ink); text-shadow: var(--halo); }
+#tempMenu.hidden { display: none; }
+#tempMenu .row { display: grid; grid-template-columns: 16px auto 1fr auto; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; }
+#tempMenu svg { width: 14px; height: 14px; fill: var(--ink-muted); }
+#tempMenu .n { font-weight: 600; } #tempMenu .d { color: var(--ink-muted); font-size: 12px; white-space: nowrap; } #tempMenu .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+#tempMenu .warm .v { color: var(--warn); } #tempMenu .hot .v { color: var(--danger); }
 #temps .t { display: inline-flex; align-items: center; gap: 2px; }
 #temps svg { width: 10px; height: 10px; fill: var(--ink-muted); }
 #temps .warm { color: var(--warn); } #temps .hot { color: var(--danger); }
@@ -218,6 +231,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
    second line; body and GPU readouts and the resolution are dropped */
 @media (max-width: 640px) {
   #temps [data-k="body"], #temps [data-k="gpu"], #stats .res { display: none; }
-  #modeSlot { left: 56px; right: 96px; transform: none; justify-content: center; }   /* the space between the drawer button and the address+refresh pair */
-  #stats { top: calc(max(6px, env(safe-area-inset-top)) + 28px); left: 50%; transform: translateX(-50%); max-width: calc(100vw - 112px); }
+  #modeSlot { left: 56px; right: 96px; transform: none; justify-content: center; flex-wrap: wrap; }   /* the space between the drawer button and the address+refresh pair */
+  #modeSlot #stats { margin-top: 2px; }   /* wraps to its own line under the group */
 }

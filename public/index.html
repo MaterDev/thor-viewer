@@ -15,8 +15,7 @@
 <canvas id="screen"></canvas>
 <div id="status">connecting…</div>
 <!-- top centre, left of the stats bar: Stream / Live mode toggle -->
-<div id="modeSlot"><button id="heatBtn" class="top-pill" title="Heat guard: on" aria-label="Heat guard"><span><svg><use href="icons.svg#temperature--hot"/></svg><b id="heatLeft" class="hidden"></b></span></button><div id="temps" role="group" aria-label="Temperatures"></div><button id="modeBtn" class="top-pill" title="Mode"><span><b data-m="stream">Stream</b><b data-m="live">Live</b></span></button></div>
-<div id="stats" aria-hidden="true">–</div>
+<div id="modeSlot"><button id="heatBtn" class="top-pill" title="Heat guard: on" aria-label="Heat guard"><span><svg><use href="icons.svg#temperature--hot"/></svg><b id="heatLeft" class="hidden"></b></span></button><div id="tempWrap"><div id="temps" role="button" tabindex="0" aria-label="Temperatures (tap for names)" aria-expanded="false"></div><div id="tempMenu" class="hidden" role="dialog" aria-label="Temperature sensors"></div></div><button id="modeBtn" class="top-pill" title="Mode"><span><b data-m="stream">Stream</b><b data-m="live">Live</b></span></button><div id="stats" aria-hidden="true">–</div></div>
 
 <!-- top-left: the drawer (tabs, keyboard, console, controls, settings, full screen) -->
 <button id="tabsBtn" class="ib corner" title="Drawer" aria-label="Drawer"><svg><use href="icons.svg#menu"/></svg></button>

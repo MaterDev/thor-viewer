@@ -480,8 +480,27 @@ applyStats();
 // Temperatures via the server's /api/temp (the page can't read /sys), shown in °F beside the heat-guard
 // thermometer: battery (what the hand feels; battery health), body (xo-therm, the board: closest to skin),
 // CPU and GPU (max over their zones). Coloured as they climb. Polled only while the stats bar is shown.
+// Tapping the readouts opens a small list with each sensor's name and meaning (built only while open).
+const SENSOR_INFO = { battery: 'what your hand feels; battery health', body: 'board sensor, closest to the surface',
+  cpu: 'hottest CPU core; what throttles', gpu: 'hottest GPU zone; graphics load' };
+function renderTempMenu() {
+  const m = $('tempMenu'); if (!m || m.classList.contains('hidden')) return;
+  m.innerHTML = SENSORS.filter(([k]) => lastTemp[k] != null).map(([k, label, icon, warm, hot]) => {
+    const c = lastTemp[k], f = toF(c), cls = c >= hot ? 'hot' : c >= warm ? 'warm' : '';
+    return `<div class="row ${cls}"><svg aria-hidden="true"><use href="icons.svg#${icon}"/></svg><span class="n">${label}</span><span class="d">${SENSOR_INFO[k] || ''}</span><span class="v">${Math.round(f)}°F</span></div>`;
+  }).join('') || '<div class="row"><span class="n">No readings yet</span></div>';
+}
+function setTempMenu(open) {
+  const m = $('tempMenu'), t = $('temps'); if (!m || !t) return;
+  m.classList.toggle('hidden', !open); t.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) renderTempMenu(); else m.textContent = '';
+}
+$('temps').onclick = e => { e.stopPropagation(); setTempMenu($('tempMenu').classList.contains('hidden')); };
+$('temps').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('temps').click(); } };
+document.addEventListener('pointerdown', e => { if (!e.target.closest('#tempWrap')) setTempMenu(false); });
 function renderTemps() {
   const el = $('temps'); if (!el) return;
+  renderTempMenu();
   el.classList.toggle('hidden', !showStats);
   el.innerHTML = SENSORS.filter(([k]) => lastTemp[k] != null).map(([k, label, icon, warm, hot]) => {
     const c = lastTemp[k], f = toF(c), cls = c >= hot ? 'hot' : c >= warm ? 'warm' : '';
