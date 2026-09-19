@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const arg = k => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : undefined; };
-const SECS = Number(arg('secs') || 60), ONLY = (arg('only') || 'a,b,c').split(',');
+const SECS = Number(arg('secs') || 60), ONLY = (arg('only') || 'a,b,c').split(','), MODES = (arg('modes') || 'stream,live').split(',');
 const START_C = 70, COOL_C = 65;
 const VIEWER = 'http://127.0.0.1:4850';
 const FIXTURE = 'http://127.0.0.1:4858/';
@@ -46,7 +46,7 @@ async function liveOpen(url) {
   for (let i = 0; i < 30 && !(await status()).attached; i++) await sleep(500);
   const r = await (await fetch(VIEWER + '/api/live/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) })).json().catch(() => ({}));
   if (!r.ok) return false;
-  for (let i = 0; i < 30; i++) { if (((await status()).frameUrl || '').startsWith(url.split('?')[0]) && (await status()).frameUrl === url) return true; await sleep(500); }
+  for (let i = 0; i < 30; i++) { if (((await status()).frameUrl || '').startsWith(url)) return true; await sleep(500); }   // the page may add params
   return false;
 }
 async function othersOnGpu() {
@@ -74,7 +74,7 @@ log('viewer app is in', startMode, 'mode; live tab', liveTab, '; headless page',
 const results = [];
 try {
   for (const sc of SCENARIOS) {
-    for (const mode of ['stream', 'live']) {
+    for (const mode of MODES) {
       await waitCool(results.length ? COOL_C : START_C);
       log(`run ${sc.id} ${sc.label} ${mode} (hottest ${hottest().toFixed(1)}C)`);
       if (mode === 'stream') {
