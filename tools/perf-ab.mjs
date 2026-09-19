@@ -40,6 +40,15 @@ async function app(expression) {
   }
   throw new Error('viewer app not found (open the Thor Viewer app on the top screen)');
 }
+const status = async () => { try { return await (await fetch(VIEWER + '/api/live/status')).json(); } catch { return {}; } };
+// Open a URL in the live frame and confirm it landed (the viewer must be attached first).
+async function liveOpen(url) {
+  for (let i = 0; i < 30 && !(await status()).attached; i++) await sleep(500);
+  const r = await (await fetch(VIEWER + '/api/live/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) })).json().catch(() => ({}));
+  if (!r.ok) return false;
+  for (let i = 0; i < 30; i++) { if (((await status()).frameUrl || '').startsWith(url.split('?')[0]) && (await status()).frameUrl === url) return true; await sleep(500); }
+  return false;
+}
 async function othersOnGpu() {
   const out = await run('pgrep', ['-af', 'gputest-profile|livetest|AGENT_BROWSER_SESSION=gputest|cleanroom']);
   return out.split('\n').filter(l => l && !l.includes('pgrep')).length > 0;
@@ -53,9 +62,9 @@ async function waitCool(limit) {
 }
 
 const fixture = spawn(process.execPath, ['test/fixtures/serve.mjs'], { cwd: ROOT, env: { ...process.env, PORT: '4858' }, stdio: 'ignore' });
-const startMode = await app('mode');
-const liveTab = await app("(() => { try { const s = JSON.parse(localStorage.getItem('thorLiveTabs')); return (s.tabs.find(t => t.id === s.active) || {}).url || ''; } catch { return ''; } })()");
-const thorUrl = await (async () => {                    // the headless page's URL, read without touching its JS
+const startMode = process.env.RESTORE_MODE || await app('mode');                  // RESTORE_*: after an interrupted run
+const liveTab = process.env.RESTORE_LIVE_TAB || await app("(() => { try { const s = JSON.parse(localStorage.getItem('thorLiveTabs')); return (s.tabs.find(t => t.id === s.active) || {}).url || ''; } catch { return ''; } })()");
+const thorUrl = process.env.RESTORE_HEADLESS_URL || await (async () => {                    // the headless page's URL, read without touching its JS
   const ws = (await run('/home/key/.local/bin/agent-browser', ['get', 'cdp-url'], { THOR_GATE: 'off' })).match(/ws:\/\/\S+/)?.[0];
   const c = new WebSocket(ws); await new Promise(r => { c.onopen = r; });
   const res = await new Promise(r => { c.onmessage = m => r(JSON.parse(m.data)); c.send(JSON.stringify({ id: 1, method: 'Target.getTargets' })); });
@@ -74,8 +83,7 @@ try {
         await run('/home/key/.local/bin/agent-browser', ['open', sc.url], { THOR_GATE: 'off' }, 60000);
       } else {
         await app("setMode('live'); mode");
-        await sleep(5000);
-        await fetch(VIEWER + '/api/live/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: sc.url }) });
+        if (!await liveOpen(sc.url)) { log(`skip ${sc.id} live: the live frame did not load ${sc.url}`); continue; }
       }
       await sleep(8000);                               // load + the first [lab:frame] window
       const out = await run(process.execPath, [ROOT + 'tools/perf-sample.mjs', '--mode', mode, '--label', `${sc.id}-${sc.label}`, '--secs', String(SECS)], {}, (SECS + 60) * 1000);
@@ -89,7 +97,7 @@ try {
     if (thorUrl) await run('/home/key/.local/bin/agent-browser', ['open', thorUrl], { THOR_GATE: 'off' }, 60000);
     if (startMode === 'live') {
       await app("setMode('live'); mode"); await sleep(5000);
-      if (liveTab) await fetch(VIEWER + '/api/live/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: liveTab }) });
+      if (liveTab) await liveOpen(liveTab);
     }
     log('restored: viewer', startMode, liveTab, '; headless', thorUrl);
   } catch (e) { log('could not restore the viewer:', e.message); }

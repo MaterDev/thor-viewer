@@ -36,9 +36,9 @@ const takeLab = text => {
 };
 let stopConsole = () => {};
 if (MODE === 'live') {
-  let seen = 0;
+  let since = Date.now();                               // only what is logged during this run (the relay is a ring)
   const t = setInterval(async () => {
-    try { const logs = await (await fetch(VIEWER + '/api/live/logs')).json(); for (const l of logs.slice(seen)) takeLab(l.text || ''); seen = logs.length; } catch {}
+    try { const logs = await (await fetch(VIEWER + '/api/live/logs')).json(); for (const l of logs.filter(l => l.t > since)) takeLab(l.text || ''); since = Math.max(since, ...logs.map(l => l.t)); } catch {}
   }, 1000);
   stopConsole = () => clearInterval(t);
 } else {
