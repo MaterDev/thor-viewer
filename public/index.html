@@ -15,7 +15,7 @@
 <canvas id="screen"></canvas>
 <div id="status">connecting…</div>
 <!-- top centre, left of the stats bar: Stream / Live mode toggle -->
-<button id="modeBtn" class="top-pill" title="Mode"><span><b data-m="stream">Stream</b><b data-m="live">Live</b></span></button>
+<div id="modeSlot"><button id="heatBtn" class="top-pill" title="Heat guard: on" aria-label="Heat guard"><span><svg><use href="icons.svg#temperature--hot"/></svg><b id="heatLeft" class="hidden"></b></span></button><button id="modeBtn" class="top-pill" title="Mode"><span><b data-m="stream">Stream</b><b data-m="live">Live</b></span></button></div>
 <div id="stats" aria-hidden="true">–</div>
 
 <!-- top-left: tabs drawer -->

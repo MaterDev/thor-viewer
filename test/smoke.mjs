@@ -26,7 +26,7 @@ const PAGE = `<html><head><title>viewer test</title></head><body style="font:24p
 const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  (' + detail + ')' : ''}`); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const ab = (...args) => new Promise(resolve => execFile(AB, args, { timeout: 20000 }, (err, stdout) => resolve(err ? '' : stdout.trim())));
+const ab = (...args) => new Promise(resolve => execFile(AB, args, { env: { ...process.env, THOR_GATE: 'off' }, timeout: 20000 }, (err, stdout) => resolve(err ? '' : stdout.trim())));
 const abEval = async js => { try { let v = JSON.parse(await ab('eval', js)); if (typeof v === 'string' && /^[\[{]/.test(v)) v = JSON.parse(v); return v; } catch { return null; } };
 async function until(fn, ms = 6000, step = 200) { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(step); } return v; }
 

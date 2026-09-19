@@ -6,7 +6,8 @@
 //   livetest-park  stands in for the `thor` session that Live mode must freeze and resume.
 // A fixture server plays the dev page shown live. Run: node test/live.mjs
 import { execFile, spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createServer, connect as tcp } from 'node:net';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +30,19 @@ async function until(fn, ms = 12000) { const end = Date.now() + ms; let v; while
 let pass = 0, fail = 0;
 const check = (name, ok, detail) => { ok ? pass++ : fail++; console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${ok || detail === undefined ? '' : '\n        ' + JSON.stringify(detail)}`); };
 const procs = [];
+// A TCP proxy in front of the host browser's CDP port, so the test can cut CDP like a lost adb forward.
+function cdpProxy(listenPort, targetPort) {
+  const socks = new Set(); let blocked = false;
+  const srv = createServer(c => {
+    if (blocked) return c.destroy();
+    const u = tcp(targetPort, '127.0.0.1'); socks.add(c); socks.add(u);
+    c.pipe(u); u.pipe(c);
+    const end = () => { c.destroy(); u.destroy(); socks.delete(c); socks.delete(u); };
+    c.on('error', end); u.on('error', end); c.on('close', end); u.on('close', end);
+  }).listen(listenPort, '127.0.0.1');
+  return { cut() { blocked = true; for (const x of socks) x.destroy(); }, heal() { blocked = false; }, close() { srv.close(); } };
+}
+let proxy = null;
 function serve(cmd, args, env) { const p = spawn(cmd, args, { cwd: ROOT, env: { ...process.env, ...env }, stdio: 'ignore' }); procs.push(p); return p; }
 
 try {
@@ -38,7 +52,11 @@ try {
   const cdp = await ab([...HOST, 'get', 'cdp-url']);
   const port = (cdp.match(/127\.0\.0\.1:(\d+)/) || [])[1];
   check('host browser exposes CDP', !!port, cdp);
-  serve(process.execPath, ['server.mjs'], { PORT: String(VIEWER), LIVE_CDP: `http://127.0.0.1:${port}`,
+  proxy = cdpProxy(4856, Number(port));
+  const setTemp = c => writeFileSync(join(tmp, 'thermal'), String(c * 1000));
+  setTemp(50);
+  serve(process.execPath, ['server.mjs'], { PORT: String(VIEWER), LIVE_CDP: 'http://127.0.0.1:4856', LIVE_PAUSE_HEADLESS: 'always',
+    LIVE_THERMAL_FILE: join(tmp, 'thermal'), LIVE_HEAT_HOLD_MS: '2000', LIVE_HEAT_FILE: join(tmp, 'heat.json'),
     HEADLESS_AB_ARGS: PARK.join(' '), LIVE_NOTIFY: '0', LIVE_MODE_FILE: join(tmp, 'mode'), LIVE_MODE_LOG: join(tmp, 'modes.log') });
   // A ticking page in the headless session: rAF and timer counters, some scroll.
   await ab([...PARK, 'eval', "window.__n=0;(function f(){__n++;requestAnimationFrame(f)})();window.__t=0;setInterval(()=>__t++,100);document.body.style.height='3000px';scrollTo(0,321);1"]);
@@ -62,7 +80,7 @@ try {
 
   console.log('the gate routes an agent to the live page (no flags)');
   const gate = (args) => new Promise(res => execFile(join(ROOT, 'tools/agent-browser-gate'), args, { timeout: 60000,
-    env: { ...process.env, THOR_VIEWER_URL: V, THOR_GATE_REAL: '/home/key/.local/share/agent-browser/bin/agent-browser', AGENT_BROWSER_SESSION: 'thor', THOR_GATE: 'on' } },
+    env: { ...process.env, THOR_VIEWER_URL: V, THOR_GATE_REAL: '/home/key/.local/share/agent-browser/bin/agent-browser', AGENT_BROWSER_SESSION: 'thor', THOR_GATE: 'on', THOR_GATE_LIVE_SESSION: 'livetest-gate' } },
     (e, out, err) => res({ code: e?.code ?? 0, out: String(out) + String(err) })));
   const gs = await gate(['snapshot', '-i']);
   check('gate: snapshot shows the live frame', /button "Add one"/.test(gs.out), gs.out.slice(0, 300));
@@ -70,7 +88,7 @@ try {
   check('gate: get url is the live page', gu.out.trim() === `${F}/`, gu);
   const gc = await gate(['close']);
   check('gate: close is refused', gc.code === 64, gc);
-  await ab(['--session', 'thor-live', 'close'], 20000);
+  await ab(['--session', 'livetest-gate', 'close'], 20000);
 
   console.log('the agent drives the live frame');
   const snap = await ab([...HOST, 'snapshot', '-i']);
@@ -137,6 +155,43 @@ try {
   await ab([...HOST, 'open', `${F}/page2.html`]);
   check('navigating the viewer away -> stream, detached', !!(await until(async () => { const m = await get('/api/mode'), st = await get('/api/live/status'); return m.mode === 'stream' && !st.attached && st.clients === 0; }, 8000)));
 
+  console.log('heat guard (simulated thermometer)');
+  await ab([...HOST, 'open', `${V}/`]);
+  check('live for the heat test', !!(await until(async () => (await get('/api/live/status')).attached, 12000)));
+  setTemp(85);
+  const hot = await until(async () => { const v = JSON.parse(await evalHost(`JSON.stringify({mode, notice: document.getElementById('notice')?.textContent || ''})`)); return v.mode === 'stream' && /Too hot/.test(v.notice) ? v : null; }, 10000);
+  check('above 80C for the hold time -> Stream with "Too hot" and a Back to Live button', !!hot && /Back to Live/.test(hot.notice), hot);
+  check('...server in stream (no auto-return)', (await get('/api/mode')).mode === 'stream');
+  setTemp(50);
+  await evalHost(`document.querySelector('#notice button').click(); 1`);
+  check('Back to Live works', !!(await until(async () => (await get('/api/live/status')).attached, 12000)));
+  await evalHost(`document.getElementById('heatBtn').click(); 1`);
+  const hs = await until(async () => { const h = await get('/api/heat'); return h.on === false ? h : null; }, 5000);
+  check('the switch turns the guard off for 30 min (server state)', !!hs && hs.offUntil - Date.now() > 29 * 60000, hs);
+  setTemp(90); await sleep(4000);
+  check('guard off: hot does not leave Live', (await get('/api/mode')).mode === 'live');
+  await ab([...HOST, 'open', `${V}/`]);
+  const badge = await until(async () => { const t = await evalHost(`document.getElementById('heatLeft').classList.contains('hidden') ? '' : document.getElementById('heatLeft').textContent`); return /\d+m/.test(t) ? t : null; }, 8000);
+  check('after a reload the switch still shows off with time left', !!badge, badge);
+  await evalHost(`document.getElementById('heatBtn').click(); 1`);
+  check('tapping again turns it back on', !!(await until(async () => (await get('/api/heat')).on, 5000)));
+  setTemp(50);
+
+  console.log('auto-fallback to Stream');
+  await ab([...HOST, 'open', `${V}/`]);
+  check('live again', !!(await until(async () => (await get('/api/live/status')).attached, 12000)));
+  proxy.cut();                                         // like the adb forward going away
+  const fell = await until(async () => { const m = await get('/api/mode'); if (m.mode !== 'stream') return null;
+    const v = JSON.parse(await evalHost(`JSON.stringify({mode, notice: document.getElementById('notice')?.textContent || '', saved: localStorage.getItem('thorMode'), stream: streamOn})`)); return v.mode === 'stream' ? v : null; }, 10000);
+  check('lost CDP -> viewer back in Stream with a notice; Key\'s choice kept', fell && /Live is unavailable/.test(fell.notice) && fell.saved === 'live' && fell.stream, fell);
+  const f0 = await tick(); await sleep(1200); const f1 = await tick();
+  check('...and the headless page is not left paused', f1[0] - f0[0] > 30, { f0, f1 });
+  await ab([...HOST, 'open', `${V}/`]);              // Live again, but CDP is still down
+  const fell2 = await until(async () => { const v = JSON.parse(await evalHost(`JSON.stringify({mode, notice: document.getElementById('notice')?.textContent || ''})`)); return v.mode === 'stream' && v.notice ? v : null; }, 12000);
+  check('Live cannot start -> Stream with a notice', !!fell2 && /no CDP endpoint/.test(fell2.notice), fell2);
+  check('...server in stream, nothing paused', (await get('/api/mode')).mode === 'stream');
+  proxy.heal();
+
   console.log('crash safety');
   const crash = `import('${ROOT}headless.mjs').then(async m => { await m.freezeHeadless(); process.exit(0); })`;
   await new Promise(r => execFile(process.execPath, ['-e', crash], { env: { ...process.env, HEADLESS_AB_ARGS: PARK.join(' ') }, timeout: 30000 }, r));
@@ -149,6 +204,8 @@ try {
 } finally {
   await ab([...HOST, 'close'], 20000); await ab([...PARK, 'close'], 20000);
   for (const p of procs) p.kill();
+  proxy?.close();
+  await ab(['--session', 'livetest-gate', 'close'], 20000);
   rmSync(tmp, { recursive: true, force: true });
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

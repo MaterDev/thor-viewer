@@ -159,7 +159,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 /* ---------- Live Page Mode (one block) ---------- */
 /* Stream / Live toggle: a segmented pill in the top-centre slot, left of the stats bar (the seam is the
    centre line). 48px hit area; the visible pill lines up with #stats. */
-#modeBtn { right: calc(50% + 4px); align-items: flex-start; padding: 6px 0 0; cursor: pointer; }
+#modeSlot { position: fixed; top: 0; right: calc(50% + 4px); z-index: 19; display: flex; align-items: flex-start; }
+#modeSlot .top-pill { position: static; }
+#modeBtn, #heatBtn { align-items: flex-start; padding: 6px 0 0; cursor: pointer; }
+#heatBtn { min-width: 48px; justify-content: flex-end; padding-right: 4px; }
+#heatBtn > span { padding: 0 6px; gap: 3px; }
+#heatBtn svg { width: 14px; height: 14px; fill: currentColor; }
+#heatBtn b { font: 600 10px var(--sans); }
+#heatBtn[data-off] > span { color: #f2a541; box-shadow: var(--glass-specular), inset 0 0 0 1px rgba(242, 165, 65, .7); }
+#notice button { margin-left: 10px; padding: 4px 10px; border-radius: var(--radius-pill); border: 1px solid var(--glass-edge); background: var(--selected); color: var(--ink); font: 600 12px var(--sans); min-height: 32px; }
 #modeBtn > span { gap: 0; padding: 0 2px; }
 #modeBtn b { font-weight: 500; padding: 2px 9px; border-radius: var(--radius-pill); color: var(--ink-muted); }
 #modeBtn[data-mode="stream"] b[data-m="stream"], #modeBtn[data-mode="live"] b[data-m="live"] { background: var(--selected); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--ring); }
@@ -167,7 +175,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #liveFrame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; z-index: 1; }
 #liveEmpty { position: fixed; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; color: var(--ink-muted); font: 13px var(--sans); }
 #status { z-index: 5; }
-#liveNote { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 26; max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: var(--radius-ctl);
+#notice, #liveNote { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 26; max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: var(--radius-ctl);
   font: 13px var(--sans); color: var(--ink); text-shadow: var(--halo);
   background: var(--glass-sheen), linear-gradient(var(--glass-tint), var(--glass-tint)), linear-gradient(var(--glass-scrim), var(--glass-scrim));
   border: 1px solid var(--glass-edge); box-shadow: var(--glass-specular), var(--glass-shadow); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }

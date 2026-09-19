@@ -1,0 +1,13 @@
+#!/bin/sh
+# agent-browser wrapper for the Thor. Binary and version-matched skill files
+# live in ~/.local/share/agent-browser (see skill: agent-browser).
+export AGENT_BROWSER_SKILLS_DIR="${AGENT_BROWSER_SKILLS_DIR:-/home/key/.local/share/agent-browser/skill-data}"
+export AGENT_BROWSER_SESSION="${AGENT_BROWSER_SESSION:-thor}"
+# Port 9223 belongs to the "thor" session only (the Thor Viewer connects there). Any other session
+# (gputest, a test session) must not grab it, or thor's stream lands on a random port and the viewer
+# shows "browser stream closed". Detect --session on the command line as well as the env var.
+sess="$AGENT_BROWSER_SESSION"; prev=""
+for a in "$@"; do [ "$prev" = "--session" ] && sess="$a"; case "$a" in --session=*) sess="${a#--session=}";; esac; prev="$a"; done
+if [ "$sess" = "thor" ]; then export AGENT_BROWSER_STREAM_PORT="${AGENT_BROWSER_STREAM_PORT:-9223}"; fi
+export VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/data/data/com.termux/files/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json}"
+exec /home/key/.local/share/agent-browser/bin/agent-browser "$@"

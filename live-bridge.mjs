@@ -22,9 +22,20 @@ const THOR_ADB = process.env.THOR_ADB_SCRIPT || '/code/projects/thor-infrastruct
 const FRAME_NAME = 'thorLive';
 import { createModes } from './modes.mjs';
 import { freezeHeadless, thawHeadless } from './headless.mjs';
+import { createHeatGuard } from './heat-guard.mjs';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 const MODE_FILE = process.env.LIVE_MODE_FILE || '/home/key/.cache/thor-viewer-mode';
 const MODE_LOG = process.env.LIVE_MODE_LOG || '/home/key/.cache/thor-viewer-modes.log';
+// Pause the headless page in Live only when agents cannot hit it by accident: that needs the routing
+// gate installed as the agent-browser wrapper. Without it an agent's command would go to a paused
+// page and hang, so the headless page keeps running (it costs some GPU, it breaks nothing).
+// LIVE_PAUSE_HEADLESS = auto (default) | always | never.
+const WRAPPER = process.env.AGENT_BROWSER || '/home/key/.local/bin/agent-browser';
+export async function gateInstalled() { try { return (await readFile(WRAPPER, 'utf8')).includes('agent-browser gate'); } catch { return false; } }
+async function shouldPauseHeadless() {
+  const p = process.env.LIVE_PAUSE_HEADLESS || 'auto';
+  return p === 'always' || (p === 'auto' && await gateInstalled());
+}
 const LEAVE_GRACE = 3000;           // a viewer reload in Live mode reconnects within this; don't bounce modes
 const LOG_KEEP = 300;
 
@@ -92,8 +103,16 @@ export async function recoverAtStartup() {
   let last = ''; try { last = (await readFile(MODE_FILE, 'utf8')).trim(); } catch {}
   if (last === 'live' || last === 'borrowed') { try { await thawHeadless(); } catch {} writeFile(MODE_FILE, 'stream\n').catch(() => {}); }
 }
+// Heat guard: runs only while Live is on (started/stopped from the mode machine below).
+const logLine = line => { console.log(line); appendFile(MODE_LOG, line + '\n').catch(() => {}); };
+export const heat = createHeatGuard({
+  stateFile: process.env.LIVE_HEAT_FILE || '/home/key/.cache/thor-viewer-heat.json',
+  hold: Number(process.env.LIVE_HEAT_HOLD_MS) || undefined,
+  log: line => logLine(`${new Date().toISOString()} ${line}`),
+  onTrip: t => viewerGone(`Too hot (${Math.round(t)}°C), switched to Stream.`, { heat: true }),
+});
 export const modes = createModes({
-  freezeHeadless, thawHeadless,
+  freezeHeadless: async () => (await shouldPauseHeadless()) ? freezeHeadless() : 0, thawHeadless,
   pauseLive: async until => {
     emit({ type: 'mode', mode: 'borrowed', until });
     borrowNotice(until);
@@ -110,7 +129,7 @@ export const modes = createModes({
       await S.cdp.send('Debugger.resume', {}, sess); await S.cdp.send('Debugger.disable', {}, sess);
     }
   },
-  onChange: snap => { pings(snap.mode !== 'stream'); emit({ type: 'mode', ...snap }); writeFile(MODE_FILE, snap.mode + '\n').catch(() => {}); },
+  onChange: snap => { pings(snap.mode !== 'stream'); snap.mode === 'stream' ? heat.stop() : heat.start(); emit({ type: 'mode', ...snap }); writeFile(MODE_FILE, snap.mode + '\n').catch(() => {}); },
   log: line => { console.log(line); appendFile(MODE_LOG, line + '\n').catch(() => {}); },
 });
 const attached = () => !!S.cdp;
@@ -247,7 +266,8 @@ export function stop(removeForward = true) {
 }
 // The viewer page is gone (navigated, reloaded, closed): detach now and end its event streams, which
 // can outlive the page on Android. A viewer that comes back in Live mode starts over.
-function viewerGone(why) {
+function viewerGone(why, extra = {}) {
+  emit({ type: 'fallback', reason: why, ...extra });              // the viewer goes back to Stream and says why
   stop();
   for (const res of S.clients) { try { res.end(); } catch {} }
   S.clients.clear();
@@ -294,6 +314,12 @@ export async function handle(req, res, path, readBody) {
     }
     json(200, m); return true;
   }
+  if (path === '/api/heat' && req.method === 'GET') { json(200, heat.state()); return true; }
+  if (path === '/api/heat' && req.method === 'POST') {
+    if (!/^application\/json/.test(req.headers['content-type'] || '')) { json(415, { ok: false }); return true; }
+    let b = {}; try { b = JSON.parse(await readBody() || '{}'); } catch {}
+    json(200, heat.override(b.off ? (Number(b.ms) || undefined) : 0)); return true;
+  }
   if (!path.startsWith('/api/live/') && !path.startsWith('/api/mode/')) return false;
   const op = path.startsWith('/api/mode/') ? 'mode-' + path.slice(10) : path.slice(10);
   if (req.method === 'GET' && op === 'status') { json(200, status()); return true; }
@@ -310,10 +336,15 @@ export async function handle(req, res, path, readBody) {
   if (!/^application\/json/.test(req.headers['content-type'] || '')) { json(415, { ok: false, reason: 'application/json only' }); return true; }
   let body = {}; try { body = JSON.parse(await readBody() || '{}'); } catch {}
   if (op === 'start') {
-    const m = await modes.enterLive({});                        // freezes the headless page first
+    const m = await modes.enterLive({});                        // pauses the headless page first (see above)
     if (!m.ok) { json(409, m); return true; }
     const origin = `http://${req.headers.host}/`; S.origin = origin;
-    json(200, await start(String(body.token || ''), origin)); return true;
+    const r = await start(String(body.token || ''), origin);
+    if (!r.ok) {                                                // auto-fallback: never stay in a half Live
+      stop(); await modes.leaveLive('Live could not start: ' + (r.reason || 'unknown'));
+      json(200, { ...r, fallback: true }); return true;
+    }
+    json(200, r); return true;
   }
   if (op === 'stop') { stop(); json(200, await modes.leaveLive('viewer switched to Stream')); return true; }
   if (op === 'nav' && NAV_JS[body.op]) { json(200, await evalInFrame(NAV_JS[body.op])); return true; }
