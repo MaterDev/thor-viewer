@@ -75,8 +75,8 @@ function draw() {
   else { ctx.fillStyle = '#05080c'; ctx.fillRect(0, 0, fw, fh); }
   if (cursor.visible) {
     const r = 10 / view.scale, lw = 2 / view.scale;
-    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r, 0, Math.PI * 2); ctx.strokeStyle = '#5ee0ff'; ctx.lineWidth = lw; ctx.stroke();
-    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r / 5, 0, Math.PI * 2); ctx.fillStyle = '#5ee0ff'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r, 0, Math.PI * 2); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = lw; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r / 5, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
   }
 }
 let lastW = innerWidth;
