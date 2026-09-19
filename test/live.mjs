@@ -130,6 +130,13 @@ try {
   const log = await import('node:fs').then(fs => fs.readFileSync(join(tmp, 'modes.log'), 'utf8'));
   check('mode changes are logged', /stream -> live/.test(log) && /live -> borrowed/.test(log) && /timed out/.test(log) && /live -> stream/.test(log), log);
 
+  console.log('the viewer page navigating away ends Live (regression: on-device run stayed "live")');
+  await evalHost(`localStorage.setItem('thorMode','live'); 1`);
+  await ab([...HOST, 'open', `${V}/`]);
+  check('back in live', !!(await until(async () => (await get('/api/live/status')).attached, 12000)));
+  await ab([...HOST, 'open', `${F}/page2.html`]);
+  check('navigating the viewer away -> stream, detached', !!(await until(async () => { const m = await get('/api/mode'), st = await get('/api/live/status'); return m.mode === 'stream' && !st.attached && st.clients === 0; }, 8000)));
+
   console.log('crash safety');
   const crash = `import('${ROOT}headless.mjs').then(async m => { await m.freezeHeadless(); process.exit(0); })`;
   await new Promise(r => execFile(process.execPath, ['-e', crash], { env: { ...process.env, HEADLESS_AB_ARGS: PARK.join(' ') }, timeout: 30000 }, r));

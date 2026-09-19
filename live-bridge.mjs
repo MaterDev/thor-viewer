@@ -110,7 +110,7 @@ export const modes = createModes({
       await S.cdp.send('Debugger.resume', {}, sess); await S.cdp.send('Debugger.disable', {}, sess);
     }
   },
-  onChange: snap => { emit({ type: 'mode', ...snap }); writeFile(MODE_FILE, snap.mode + '\n').catch(() => {}); },
+  onChange: snap => { pings(snap.mode !== 'stream'); emit({ type: 'mode', ...snap }); writeFile(MODE_FILE, snap.mode + '\n').catch(() => {}); },
   log: line => { console.log(line); appendFile(MODE_LOG, line + '\n').catch(() => {}); },
 });
 const attached = () => !!S.cdp;
@@ -172,7 +172,10 @@ function onEvent(m) {
   const p = params;
   if (method === 'Page.frameNavigated' && p.frame) {
     const f = p.frame;
-    if (!f.parentId) { S.mainFrameId = f.id; return; }
+    if (!f.parentId) {                     // the viewer page itself navigated or reloaded: it left Live mode
+      if (S.mainFrameId && attached()) viewerGone('the viewer page navigated away');
+      S.mainFrameId = f.id; return;
+    }
     if (f.name === FRAME_NAME || f.id === S.liveFrameId) {
       S.liveFrameId = f.id;
       const url = f.url + (f.urlFragment || '');
@@ -217,7 +220,7 @@ export async function start(token, origin) {
     const c = await findViewerTarget(token, origin);
     if (!c) return { ok: false, reason: 'the viewer page was not found over CDP (open the viewer app, then try again)' };
     S.cdp = c; S.token = token;
-    c.onclose = () => { if (S.cdp === c) { S.cdp = null; emit({ type: 'state', attached: false, reason: 'CDP connection closed' }); } };
+    c.onclose = () => { if (S.cdp === c) { S.cdp = null; emit({ type: 'state', attached: false, reason: 'CDP connection closed' }); viewerGone('CDP connection to the viewer closed'); } };
     c.on(onEvent);
     S.targetId = (await c.send('Target.getTargetInfo')).result?.targetInfo?.targetId || null;
     await c.send('Page.enable'); await c.send('Runtime.enable');
@@ -241,6 +244,20 @@ export function stop(removeForward = true) {
   Object.assign(S, { targetId: null, token: null, mainFrameId: null, liveFrameId: null, liveSession: null, url: '', title: '', logs: [] });
   S.contexts.clear();
   if (removeForward && S.createdForward) { S.createdForward = false; run(ADB, ['forward', '--remove', 'tcp:9222'], 5000); }
+}
+// The viewer page is gone (navigated, reloaded, closed): detach now and end its event streams, which
+// can outlive the page on Android. A viewer that comes back in Live mode starts over.
+function viewerGone(why) {
+  stop();
+  for (const res of S.clients) { try { res.end(); } catch {} }
+  S.clients.clear();
+  modes.leaveLive(why);
+}
+// SSE clients that died without a clean close are only noticed on write: ping while Live is on.
+let pingTimer = null;
+function pings(on) {
+  clearInterval(pingTimer); pingTimer = null;
+  if (on) pingTimer = setInterval(() => { for (const res of S.clients) res.write(': ping\n\n'); }, 15000);
 }
 // The viewer left Live mode (or disappeared): back to Stream after a short grace.
 function scheduleLeave(why) {
