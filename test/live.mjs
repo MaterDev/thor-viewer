@@ -60,6 +60,18 @@ try {
   const idle = await evalHost(`JSON.stringify({ws: typeof ws === 'undefined' ? null : (ws && ws.readyState), hidden: document.getElementById('screen').classList.contains('hidden'), streamOn})`);
   check('viewer: no stream socket, canvas hidden', (() => { const o = JSON.parse(idle); return o.ws == null && o.hidden && o.streamOn === false; })(), idle);
 
+  console.log('the gate routes an agent to the live page (no flags)');
+  const gate = (args) => new Promise(res => execFile(join(ROOT, 'tools/agent-browser-gate'), args, { timeout: 60000,
+    env: { ...process.env, THOR_VIEWER_URL: V, THOR_GATE_REAL: '/home/key/.local/share/agent-browser/bin/agent-browser', AGENT_BROWSER_SESSION: 'thor', THOR_GATE: 'on' } },
+    (e, out, err) => res({ code: e?.code ?? 0, out: String(out) + String(err) })));
+  const gs = await gate(['snapshot', '-i']);
+  check('gate: snapshot shows the live frame', /button "Add one"/.test(gs.out), gs.out.slice(0, 300));
+  const gu = await gate(['get', 'url']);
+  check('gate: get url is the live page', gu.out.trim() === `${F}/`, gu);
+  const gc = await gate(['close']);
+  check('gate: close is refused', gc.code === 64, gc);
+  await ab(['--session', 'thor-live', 'close'], 20000);
+
   console.log('the agent drives the live frame');
   const snap = await ab([...HOST, 'snapshot', '-i']);
   const ref = (snap.match(/button "Add one" \[ref=(e\d+)\]/) || [])[1];
