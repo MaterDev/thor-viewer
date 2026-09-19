@@ -17,6 +17,7 @@ Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts
 
 - Two modes (toggle top-centre, left of the stats bar): **Stream** (your headless `thor` page, JPEG) and **Live** (Key's real page in the viewer app). Check: `curl -s 127.0.0.1:4850/api/mode`.
 - `~/.local/bin/agent-browser` is the routing gate (`tools/agent-browser-gate`): plain commands follow the mode; in Live they act on Key's page (`@refs` from `snapshot`), `close`/`tab`/`set`/`session`/`stream` are refused. `--headless` borrows your own page for one command. Scripts that always mean the headless page (tests, start.sh, this server) set `THOR_GATE=off`. Install/remove: `bash tools/install-gate.sh install` / `uninstall` (`status` to check).
+- Heat guard (`heat-guard.mjs`): while Live is on the server reads the hottest thermal zone at 1 Hz; above 80°C for 20 s it falls back to Stream (notice with "Back to Live"; no auto-return). The thermometer button beside the mode pill turns it off for 30 min (`/api/heat`, persisted).
 - Live falls back to Stream by itself (with a notice) if adb/CDP is missing or lost; the headless page is paused in Live only while the gate is installed (`LIVE_PAUSE_HEADLESS=auto`). Live tabs: only the active one is loaded; switching reloads it (deliberate).
 - Code: `modes.mjs` (state machine), `live-bridge.mjs`, `headless.mjs`, `public/live.js`. Tests: `npm run test:live`. Risks and mitigations: `docs/live-mode-risks.md`.
 

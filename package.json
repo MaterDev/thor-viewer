@@ -7,7 +7,7 @@
     "start": "node server.mjs",
     "test": "node --import /home/key/.local/share/playwright-mcp/platform-linux.mjs test/smoke.mjs",
     "build:icons": "node tools/build-icons.mjs",
-    "test:live": "node --test test/modes.test.mjs && bash test/gate.test.sh && node test/live.mjs"
+    "test:live": "node --test test/modes.test.mjs test/heat.test.mjs && bash test/gate.test.sh && node test/live.mjs"
   },
   "repository": {
     "type": "git",

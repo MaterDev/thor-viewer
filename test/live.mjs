@@ -7,7 +7,7 @@
 // A fixture server plays the dev page shown live. Run: node test/live.mjs
 import { execFile, spawn } from 'node:child_process';
 import { createServer, connect as tcp } from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +53,10 @@ try {
   const port = (cdp.match(/127\.0\.0\.1:(\d+)/) || [])[1];
   check('host browser exposes CDP', !!port, cdp);
   proxy = cdpProxy(4856, Number(port));
+  const setTemp = c => writeFileSync(join(tmp, 'thermal'), String(c * 1000));
+  setTemp(50);
   serve(process.execPath, ['server.mjs'], { PORT: String(VIEWER), LIVE_CDP: 'http://127.0.0.1:4856', LIVE_PAUSE_HEADLESS: 'always',
+    LIVE_THERMAL_FILE: join(tmp, 'thermal'), LIVE_HEAT_HOLD_MS: '2000', LIVE_HEAT_FILE: join(tmp, 'heat.json'),
     HEADLESS_AB_ARGS: PARK.join(' '), LIVE_NOTIFY: '0', LIVE_MODE_FILE: join(tmp, 'mode'), LIVE_MODE_LOG: join(tmp, 'modes.log') });
   // A ticking page in the headless session: rAF and timer counters, some scroll.
   await ab([...PARK, 'eval', "window.__n=0;(function f(){__n++;requestAnimationFrame(f)})();window.__t=0;setInterval(()=>__t++,100);document.body.style.height='3000px';scrollTo(0,321);1"]);
@@ -151,6 +154,28 @@ try {
   check('back in live', !!(await until(async () => (await get('/api/live/status')).attached, 12000)));
   await ab([...HOST, 'open', `${F}/page2.html`]);
   check('navigating the viewer away -> stream, detached', !!(await until(async () => { const m = await get('/api/mode'), st = await get('/api/live/status'); return m.mode === 'stream' && !st.attached && st.clients === 0; }, 8000)));
+
+  console.log('heat guard (simulated thermometer)');
+  await ab([...HOST, 'open', `${V}/`]);
+  check('live for the heat test', !!(await until(async () => (await get('/api/live/status')).attached, 12000)));
+  setTemp(85);
+  const hot = await until(async () => { const v = JSON.parse(await evalHost(`JSON.stringify({mode, notice: document.getElementById('notice')?.textContent || ''})`)); return v.mode === 'stream' && /Too hot/.test(v.notice) ? v : null; }, 10000);
+  check('above 80C for the hold time -> Stream with "Too hot" and a Back to Live button', !!hot && /Back to Live/.test(hot.notice), hot);
+  check('...server in stream (no auto-return)', (await get('/api/mode')).mode === 'stream');
+  setTemp(50);
+  await evalHost(`document.querySelector('#notice button').click(); 1`);
+  check('Back to Live works', !!(await until(async () => (await get('/api/live/status')).attached, 12000)));
+  await evalHost(`document.getElementById('heatBtn').click(); 1`);
+  const hs = await until(async () => { const h = await get('/api/heat'); return h.on === false ? h : null; }, 5000);
+  check('the switch turns the guard off for 30 min (server state)', !!hs && hs.offUntil - Date.now() > 29 * 60000, hs);
+  setTemp(90); await sleep(4000);
+  check('guard off: hot does not leave Live', (await get('/api/mode')).mode === 'live');
+  await ab([...HOST, 'open', `${V}/`]);
+  const badge = await until(async () => { const t = await evalHost(`document.getElementById('heatLeft').classList.contains('hidden') ? '' : document.getElementById('heatLeft').textContent`); return /\d+m/.test(t) ? t : null; }, 8000);
+  check('after a reload the switch still shows off with time left', !!badge, badge);
+  await evalHost(`document.getElementById('heatBtn').click(); 1`);
+  check('tapping again turns it back on', !!(await until(async () => (await get('/api/heat')).on, 5000)));
+  setTemp(50);
 
   console.log('auto-fallback to Stream');
   await ab([...HOST, 'open', `${V}/`]);
