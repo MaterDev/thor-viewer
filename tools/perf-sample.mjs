@@ -29,10 +29,11 @@ top.stdout.on('data', d => {
 });
 
 // --- the page's [lab:frame] readouts ---
-let lab = { fps: '', work: '' };
+let lab = { fps: '', raf: '', work: '' };
 const takeLab = text => {
   if (!text.startsWith('[lab:frame]')) return;
-  try { const j = JSON.parse(text.slice(12)); if (j.win === 5) lab = { fps: j.fps, work: j.work?.p50 ?? '' }; } catch {}
+  // fps = frames the plugin drew (0 for pieces that don't draw per rAF); raf = the page's vsync rate
+  try { const j = JSON.parse(text.slice(12)); if (j.win === 5) lab = { fps: j.fps, raf: j.raf ? +(j.raf.n / j.win).toFixed(1) : '', work: j.work?.p50 ?? j.cpu?.p50 ?? '' }; } catch {}
 };
 let stopConsole = () => {};
 if (MODE === 'live') {
@@ -42,7 +43,7 @@ if (MODE === 'live') {
   }, 1000);
   stopConsole = () => clearInterval(t);
 } else {
-  const url = await new Promise(r => execFile('/home/key/.local/bin/agent-browser', ['get', 'cdp-url'], { env: { ...process.env, THOR_GATE: 'off' }, timeout: 15000 },
+  const url = await new Promise(r => execFile('/home/key/.local/bin/agent-browser', [...(process.env.HEADLESS_AB_ARGS || '').split(' ').filter(Boolean), 'get', 'cdp-url'], { env: { ...process.env, THOR_GATE: 'off' }, timeout: 15000 },
     (e, o) => r((String(o).match(/ws:\/\/\S+/) || [])[0])));
   const ws = new WebSocket(url); await new Promise(r => { ws.onopen = r; ws.onerror = r; });
   let id = 0; const send = (method, params = {}, sessionId) => ws.send(JSON.stringify({ id: ++id, method, params, ...(sessionId ? { sessionId } : {}) }));
@@ -57,12 +58,12 @@ if (MODE === 'live') {
 }
 
 // --- 1 Hz samples ---
-const rows = ['t,gpu_busy_pct,gpuclk_mhz,hottest_zone_c,battery_c,top5,lab_fps,lab_work_p50_ms'];
+const rows = ['t,gpu_busy_pct,gpuclk_mhz,hottest_zone_c,battery_c,top5,lab_fps,lab_work_p50_ms,lab_raf_fps'];
 const t0 = Date.now();
 for (let i = 0; i < SECS; i++) {
   await new Promise(r => setTimeout(r, t0 + (i + 1) * 1000 - Date.now()));
   rows.push([i + 1, parseInt(read('/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage')) || 0, Math.round((Number(read('/sys/class/kgsl/kgsl-3d0/gpuclk')) || 0) / 1e6),
-    hottest().toFixed(1), (Number(read('/sys/class/power_supply/battery/temp')) / 10).toFixed(1), `"${top5}"`, lab.fps, lab.work].join(','));
+    hottest().toFixed(1), (Number(read('/sys/class/power_supply/battery/temp')) / 10).toFixed(1), `"${top5}"`, lab.fps, lab.work, lab.raf].join(','));
 }
 stopConsole(); top.kill();
 mkdirSync(OUT, { recursive: true });
@@ -73,8 +74,11 @@ writeFileSync(file, rows.join('\n') + '\n');
 const data = rows.slice(1).map(r => r.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/));
 const mean = k => { const v = data.map(r => Number(r[k])).filter(Number.isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; };
 const labs = data.map(r => Number(r[6])).filter(v => v > 0);
+const rafs = data.map(r => Number(r[8])).filter(v => v > 0);
 console.log(JSON.stringify({ label: LABEL, mode: MODE, secs: SECS, gpu_busy: +mean(1).toFixed(1), gpuclk: Math.round(mean(2)), hottest_max: Math.max(...data.map(r => +r[3])),
   hottest_end: +data.at(-1)[3], battery_end: +data.at(-1)[4], lab_fps: labs.length ? +(labs.reduce((a, b) => a + b, 0) / labs.length).toFixed(1) : null,
   lab_work: (() => { const w = data.map(r => Number(r[7])).filter(v => v > 0); return w.length ? +(w.reduce((a, b) => a + b, 0) / w.length).toFixed(2) : null; })(),
+  lab_raf_fps: rafs.length ? +(rafs.reduce((a, b) => a + b, 0) / rafs.length).toFixed(1) : null,
+  hottest_median: (() => { const h = data.map(r => +r[3]).sort((a, b) => a - b); return h[Math.floor(h.length / 2)]; })(),
   top_last: data.at(-1)[5], file }));
 process.exit(0);
