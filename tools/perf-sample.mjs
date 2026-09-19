@@ -11,6 +11,7 @@ import { join } from 'node:path';
 const arg = k => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : undefined; };
 const MODE = arg('mode'), LABEL = arg('label') || 'run', SECS = Number(arg('secs') || 60);
 const OUT = arg('out') || '/home/key/.cache/thor-perf';
+const ABORT_C = Number(process.env.PERF_ABORT_C || 80);
 const VIEWER = process.env.THOR_VIEWER_URL || 'http://127.0.0.1:4850';
 const read = p => { try { return readFileSync(p, 'utf8').trim(); } catch { return ''; } };
 const zones = readdirSync('/sys/class/thermal').filter(z => z.startsWith('thermal_zone')).map(z => `/sys/class/thermal/${z}/temp`);
@@ -64,6 +65,9 @@ for (let i = 0; i < SECS; i++) {
   await new Promise(r => setTimeout(r, t0 + (i + 1) * 1000 - Date.now()));
   rows.push([i + 1, parseInt(read('/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage')) || 0, Math.round((Number(read('/sys/class/kgsl/kgsl-3d0/gpuclk')) || 0) / 1e6),
     hottest().toFixed(1), (Number(read('/sys/class/power_supply/battery/temp')) / 10).toFixed(1), `"${top5}"`, lab.fps, lab.work, lab.raf].join(','));
+  // Thermal abort: single zones spike briefly, so stop only when 5 samples in a row are above ABORT_C.
+  const recent = rows.slice(-5).map(r => +r.split(',')[3]);
+  if (i >= 4 && recent.every(v => v > ABORT_C)) { rows.push(`# aborted: hottest zone above ${ABORT_C}C for 5 s`); console.error('aborted: too hot'); break; }
 }
 stopConsole(); top.kill();
 mkdirSync(OUT, { recursive: true });
@@ -71,7 +75,7 @@ const file = join(OUT, `${new Date(t0).toISOString().replace(/[:.]/g, '-')}-${LA
 writeFileSync(file, rows.join('\n') + '\n');
 
 // summary: means over the run, plus the max hottest zone
-const data = rows.slice(1).map(r => r.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/));
+const data = rows.slice(1).filter(r => !r.startsWith('#')).map(r => r.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/));
 const mean = k => { const v = data.map(r => Number(r[k])).filter(Number.isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; };
 const labs = data.map(r => Number(r[6])).filter(v => v > 0);
 const rafs = data.map(r => Number(r[8])).filter(v => v > 0);
