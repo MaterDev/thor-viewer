@@ -3,7 +3,7 @@
 // errors (the live stream carries console output but not exceptions).
 // Run: node server.mjs   (prints the URL)
 import { createServer } from 'node:http';
-import { readFile, stat, appendFile, readdir } from 'node:fs/promises';
+import { readFile, stat, appendFile, readdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,6 +40,23 @@ function agentBrowserJson(args) {
 function runAgentBrowser(args) {
   return new Promise(resolve => execFile(AGENT_BROWSER, args, { timeout: 15000, ...AB_ENV }, err => resolve(!err)));
 }
+
+// ---------- theme: one choice for the viewer shell AND the hosted page (Theme contract, CLAUDE.md) ----------
+// Persisted server-side so every mode and page gets it. Applying = one small script in the hosted page that
+// sets <html data-theme> and dispatches a 'thor:theme' event; pages without the contract are unaffected.
+const THEME_FILE = '/home/key/.cache/thor-viewer-theme';
+const THEMES = ['standard', 'solid'];
+async function getTheme() { try { const t = (await readFile(THEME_FILE, 'utf8')).trim(); return THEMES.includes(t) ? t : 'standard'; } catch { return 'standard'; } }
+const themeJs = t => `(() => { const t = ${JSON.stringify(t)}; const go = () => { const r = document.documentElement; if (!r) return;
+  if (t === 'standard') delete r.dataset.theme; else r.dataset.theme = t;
+  window.dispatchEvent(new CustomEvent('thor:theme', { detail: { theme: t } })); };
+  go(); if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); return t; })()`;
+async function applyTheme() {
+  const t = await getTheme();
+  if (live.status().attached) return live.evalInFrame(themeJs(t));             // Live: over CDP into the live frame
+  return { ok: await runAgentBrowser(['eval', themeJs(t)]) };                    // Stream: the headless page (gate off)
+}
+live.onLiveContext(() => applyTheme().catch(() => {}));
 
 function pageErrors() {
   return new Promise(resolve => {
@@ -102,6 +119,14 @@ async function readTemp() {
 createServer(async (req, res) => {
   let path = new URL(req.url, 'http://x').pathname;
   if (await live.handle(req, res, path, async () => { let b = ''; for await (const c of req) b += c; return b; })) return;
+  if (path === '/api/theme' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' }); return res.end(JSON.stringify({ theme: await getTheme() })); }
+  if ((path === '/api/theme' || path === '/api/theme/apply') && req.method === 'POST') {
+    if (!/^application\/json/.test(req.headers['content-type'] || '')) { res.writeHead(415); return res.end(); }
+    let body = ''; for await (const c of req) body += c;
+    if (path === '/api/theme') { const { theme } = JSON.parse(body || '{}'); if (!THEMES.includes(theme)) { res.writeHead(400); return res.end(); } await writeFile(THEME_FILE, theme + '\n'); }
+    const r = await applyTheme();
+    res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ theme: await getTheme(), applied: !!(r && r.ok) }));
+  }
   if (path === '/api/temp') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
     return res.end(JSON.stringify(await readTemp()));

@@ -207,6 +207,7 @@ function onEvent(m) {
   } else if (method === 'Runtime.executionContextCreated') {
     const c = p.context; const f = c.auxData?.frameId;
     if (f && c.auxData?.isDefault) S.contexts.set(`${sessionId || ''}:${c.id}`, f);
+    if (f && c.auxData?.isDefault && f === S.liveFrameId && liveContextHook) setTimeout(() => liveContextHook(), 0);
   } else if (method === 'Runtime.executionContextDestroyed') {
     S.contexts.delete(`${sessionId || ''}:${p.executionContextId}`);
   } else if (method === 'Runtime.executionContextsCleared') {
@@ -284,6 +285,11 @@ function scheduleLeave(why) {
   clearTimeout(S.leaveTimer);
   S.leaveTimer = setTimeout(() => { S.leaveTimer = null; if (!S.clients.size) { stop(); modes.leaveLive(why); } }, LEAVE_GRACE);
 }
+
+// Called when the live frame gets a fresh default JavaScript context (every navigation or reload), so the
+// server can re-apply page-level settings such as the theme (see the Theme contract in CLAUDE.md).
+let liveContextHook = null;
+export function onLiveContext(fn) { liveContextHook = fn; }
 
 export async function evalInFrame(expression) {
   if (!attached()) return { ok: false, reason: 'not attached' };

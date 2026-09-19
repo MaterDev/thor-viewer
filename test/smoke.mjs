@@ -157,6 +157,12 @@ try {
   check('Solid theme: no backdrop-filter', solid.t === 'solid' && solid.bf === 'none', JSON.stringify(solid));
   await page.evaluate(() => document.querySelector('#settingsBody [data-theme="standard"]').click());
   await page.evaluate(() => document.getElementById('settingsClose').click());
+  // Theme contract: the server-side choice reaches the hosted page after a navigation (Stream: headless page)
+  await fetch(`${VIEWER}api/theme`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"theme":"solid"}' });
+  await ab('open', testUrl + '?themecheck');
+  const applied = await until(async () => (await abEval('document.documentElement.dataset.theme || ""')) === 'solid' ? 'solid' : '', 8000);
+  check('theme contract: Solid applied to the hosted page after navigation', applied === 'solid');
+  await fetch(`${VIEWER}api/theme`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"theme":"standard"}' });
   check('settings closed = out of rendering', await page.evaluate(() => getComputedStyle(document.getElementById('settings')).display === 'none'));
   check('no JavaScript errors in the viewer page', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 } catch (e) {

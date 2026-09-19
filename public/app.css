@@ -149,16 +149,23 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #stats .sep { color: var(--ink-muted); opacity: .6; }
 #stats.hidden { display: none; }
 
-/* Theme "solid": the same muted palette as the glass, but opaque surfaces and NO backdrop-filter anywhere.
+/* Theme "solid" (Key): a neutral ~50% gray with dark text, opaque surfaces and NO backdrop-filter anywhere.
    A theme only overrides tokens, so future colour themes slot in the same way. */
 [data-theme="solid"] {
   --glass-blur: none;
-  --glass-tint: rgba(236, 243, 255, 0);
-  --glass-scrim: rgb(40, 43, 49);
-  --glass-scrim-light: rgb(48, 51, 58);
-  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, 0) 45%);
-  --glass-edge: rgba(255, 255, 255, .14);
+  --glass-tint: rgba(0, 0, 0, 0);
+  --glass-sheen: linear-gradient(transparent, transparent);
+  --glass-scrim: #a0a0a0;                 /* ~63% gray surface: dark text 7.2:1 */
+  --glass-scrim-light: #a8a8a8;           /* raised: buttons */
+  --glass-edge: rgba(0, 0, 0, .35);        /* borders: a darker gray */
+  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, .25);
+  --glass-shadow: 0 6px 18px rgba(0, 0, 0, .22);
+  --ink: #111111; --ink-muted: #262626;   /* dark text/icons on gray, worst case (hover/selected incl.): ink 7.2:1, muted 5.8:1 */
   --halo: none;
+  --hover: rgba(255, 255, 255, .08); --pressed: rgba(255, 255, 255, .14); --selected: rgba(255, 255, 255, .18);
+  --ring: #0d0d0d;
+  --danger: #500a0a; --warn: #3d2900;     /* 5.8:1 / 5.3:1 */
+  --accent: #111111;
 }
 #settings { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 40; width: min(420px, 92vw); max-height: 84vh; display: flex; flex-direction: column; }
 #settings .cbody { overflow-y: auto; padding: 4px 18px 16px; }
@@ -183,7 +190,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #heatBtn > span { padding: 0 6px; gap: 3px; }
 #heatBtn svg { width: 14px; height: 14px; fill: currentColor; }
 #heatBtn b { font: 600 10px var(--sans); }
-#heatBtn[data-off] > span { color: #f2a541; box-shadow: var(--glass-specular), inset 0 0 0 1px rgba(242, 165, 65, .7); }
+#heatBtn[data-off] > span { color: var(--warn); box-shadow: var(--glass-specular), inset 0 0 0 1px rgba(242, 165, 65, .7); }
 #notice button { margin-left: 10px; padding: 4px 10px; border-radius: var(--radius-pill); border: 1px solid var(--glass-edge); background: var(--selected); color: var(--ink); font: 600 12px var(--sans); min-height: 32px; }
 #modeBtn > span { gap: 0; padding: 0 2px; }
 #modeBtn b { font-weight: 500; padding: 2px 9px; border-radius: var(--radius-pill); color: var(--ink-muted); }
@@ -206,7 +213,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #temps:empty, #temps.hidden { display: none; }
 #temps .t { display: inline-flex; align-items: center; gap: 2px; }
 #temps svg { width: 10px; height: 10px; fill: var(--ink-muted); }
-#temps .warm { color: #ffd78a; } #temps .hot { color: #ffa0a0; }
+#temps .warm { color: var(--warn); } #temps .hot { color: var(--danger); }
 /* narrow (phone portrait): the heat/temps/mode group is centred across the top, and the thin stats bar moves to a
    second line; body and GPU readouts and the resolution are dropped */
 @media (max-width: 640px) {

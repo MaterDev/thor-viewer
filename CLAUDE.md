@@ -32,6 +32,18 @@ Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts
 - `public/app.css`: neutral glassmorphism (token names shared with thor-canvas-lab; the viewer's tint is faintly cool). Closed panes are `display:none` (an invisible backdrop-filter still costs GPU). Address and refresh form one joined pill top-right; `.top-pill` is the slot for the Stream/Live toggle at top centre. Carbon icons via `<use href="icons.svg#name">`. Icon names are the Carbon 32px file names (`arrow--left`, `trash-can`, ...).
 - `manifest.webmanifest` + `sw.js` + PNG icons (rendered from `icon.svg` with headless Chromium) make it installable from Chrome's "Add to Home screen".
 
+## Theme contract (for any app shown in the viewer)
+
+Settings -> Themes (drawer gear) is the ONE control for the viewer shell and the hosted page. Standard = frosted
+glass; Solid = a neutral ~63% gray (`#a0a0a0`), dark ink (7.2:1), opaque, no `backdrop-filter`.
+- Stored server-side (`GET/POST /api/theme`, file `~/.cache/thor-viewer-theme`); localStorage is only a
+  first-paint cache; `?theme=` on the viewer URL overrides locally.
+- Applied to the hosted page as `<html data-theme>` + a `thor:theme` window event (detail `{ theme }`): on
+  change, after every Stream navigation (`POST /api/theme/apply`, headless page via agent-browser with the
+  gate off) and on every new live-frame context in Live (`live-bridge` `onLiveContext`, over CDP).
+- An app honours the attribute, `?theme=` on first load and the event; pages without the contract are
+  unaffected. Canvas Lab implements it.
+
 ## History and toggles
 
 - The tabs button (touch top-left, controller tabs) and address button (touch top-right, controller address) each TOGGLE their panel: press again to close (`toggleDrawer`, `toggleUrlBar`).

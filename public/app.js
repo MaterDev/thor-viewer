@@ -6,12 +6,24 @@
 // for testing (not persisted); the Settings choice persists in localStorage.
 const THEMES = ['standard', 'solid'];
 function currentTheme() { return document.documentElement.dataset.theme || 'standard'; }
+// ONE choice drives the viewer shell and the hosted page (Theme contract, CLAUDE.md): it's stored on the
+// server, which applies it to the hosted page (Live: CDP into the frame; Stream: the headless page).
+// localStorage is only a first-paint cache; ?theme= overrides this viewer locally (not saved).
 function setTheme(t, persist) {
   if (!THEMES.includes(t)) return;
   if (t === 'standard') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
-  if (persist) try { localStorage.setItem('thorTheme', t); } catch {}
+  try { localStorage.setItem('thorTheme', t); } catch {}
+  if (persist) fetch('/api/theme', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ theme: t }) }).catch(() => {});
 }
-{ let t = null; try { t = new URLSearchParams(location.search).get('theme') || localStorage.getItem('thorTheme'); } catch {} if (t) setTheme(t, false); }
+const themeParam = (() => { try { return new URLSearchParams(location.search).get('theme'); } catch { return null; } })();
+{ let t = themeParam; try { t = t || localStorage.getItem('thorTheme'); } catch {} if (t) setTheme(t, false); }
+if (!themeParam) fetch('/api/theme').then(r => r.json()).then(r => { if (r.theme !== currentTheme()) setTheme(r.theme, false); }).catch(() => {});
+let themeApplyTimer = 0;
+function applyThemeToPage() {                        // after a Stream navigation (Live re-applies server-side)
+  if (currentTheme() === 'standard') return;
+  clearTimeout(themeApplyTimer);
+  themeApplyTimer = setTimeout(() => fetch('/api/theme/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 400);
+}
 
 const STREAM = 'ws://127.0.0.1:9223/?pacing=ack&maxFps=60';
 const $ = id => document.getElementById(id);
@@ -162,7 +174,7 @@ function connect() {
       }).catch(() => send({ type: 'ack', seq: m.seq }));
     } else if (m.type === 'url') {
       if (document.activeElement !== urlEl) urlEl.value = m.url;
-      clearConsoleOnNav(m.url); addHistory(m.url);
+      clearConsoleOnNav(m.url); addHistory(m.url); applyThemeToPage();
     } else if (m.type === 'tabs' && Array.isArray(m.tabs)) {
       setTabs(m.tabs.map(t => ({ id: t.tabId, title: t.title, url: t.url, active: !!t.active })));
       const active = m.tabs.find(t => t.active) || m.tabs[0];
