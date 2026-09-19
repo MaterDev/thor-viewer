@@ -11,6 +11,8 @@ npm run build:icons  # regenerate public/icons.svg from @carbon/icons after edit
 node --import /home/key/.local/share/playwright-mcp/platform-linux.mjs tools/screenshots.mjs   # README images
 ```
 
+`skills/` holds skills the viewer provides to every app shown in it. They're symlinked into `~/.claude/skills/` so they load in any project. `skills/animation-preview/` makes temp clips, frames and contact sheets of what the viewer renders, for review in chat.
+
 Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts agent-browser and its dashboard and prints the URL. Everything dies when the Claude Code process ends; rerun the script.
 
 ## Live Page Mode (agents: this is all you need)
@@ -59,6 +61,6 @@ Render path: CDP screencast (JPEG) -> agent-browser WS -> viewer. Client-side tu
 - Decode with `createImageBitmap(Blob)` (off-main-thread), not `new Image()` + data URL; previous bitmap `.close()`d each frame.
 - Canvas backing store = frame's native pixels (e.g. 832x468), CSS-scaled to fill; NOT `innerWidth*devicePixelRatio` (was ~3x the pixels on a hi-DPI screen for no quality gain). 2d context created with `{alpha:false, desynchronized:true}`.
 - Measured ~53 fps rendered on-device (tools/measure-fps.mjs animates a page and counts acks), up from the old 15 cap.
-- Persistent stats bar: a thin translucent top-center bar shows live viewer FPS · resolution · bandwidth · device temperature (localStorage `thorStats`, default on; "Hide stats bar" in the controls panel). Temperature comes from the server route `GET /api/temp` (reads `/sys` — battery temp in the bar, SoC also returned; the page can't read /sys itself); the value is coloured amber ≥40°C, red ≥44°C. Replaced the old hidden "Show FPS" toggle.
+- Persistent stats bar (localStorage `thorStats`, default on; "Hide stats bar" in the controls panel): right of centre, the viewer's own FPS · resolution · bandwidth of the stream (in Live, the live page's fps instead). Left of centre, beside the heat-guard thermometer, a temperatures pill in °F: battery, body (`xo-therm`), CPU and GPU, from `GET /api/temp` (the page can't read /sys; the API is in °C). See "Top-centre cluster" above.
 
 GPU is real now (updated): the remote Chromium runs `--use-angle=vulkan` (NOT `--disable-gpu`) and renders WebGL2 AND WebGPU on the actual Adreno 740 GPU via Mesa Turnip + the companion `turnip-kgsl-shim` (see that repo). Canvas Lab pieces run at 60fps through the viewer. Do NOT re-add `--disable-gpu` or the Vulkan compositing feature (the latter crash-loops/overheats the device). Daemon-wide stream quality is `AGENT_BROWSER_STREAM_QUALITY` (default 80) if gradients need it.
