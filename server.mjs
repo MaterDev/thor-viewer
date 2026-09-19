@@ -105,8 +105,27 @@ function mayChangePins(req) {
 async function pinnedView(tabs) {                              // tabs -> pinned-first order, persisting pin moves
   const r = applyPins(await readPins(), tabs); if (r.changed) await writePins(r.pins); return r.order;
 }
-async function sharedFromHeadless(prev) {
+// agent-browser's tab list keeps the title a tab had when it opened (often just its URL); Chrome's own target
+// list (/json/list on the CDP port) has the current one. Fresh titles by targetId; the CDP address is cached.
+let cdpHttp = null;
+const unescapeHtml = t => t.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+async function tabList() {
   const out = await agentBrowserJson(['tab', 'list']), list = out?.data?.tabs;
+  if (!Array.isArray(list)) return list;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!cdpHttp) { const u = (await agentBrowserJson(['get', 'cdp-url']))?.data?.cdpUrl; cdpHttp = u ? u.replace(/^ws:\/\/([^/]+).*$/, 'http://$1') : null; }
+    if (!cdpHttp) break;
+    try {
+      const targets = await (await fetch(cdpHttp + '/json/list', { signal: AbortSignal.timeout(1500) })).json();
+      const byId = new Map(targets.map(t => [t.id, unescapeHtml(String(t.title || ''))]));
+      for (const t of list) { const f = byId.get(t.targetId); if (f) t.title = f; }
+      break;
+    } catch { cdpHttp = null; }                                  // browser restarted: look the address up again
+  }
+  return list;
+}
+async function sharedFromHeadless(prev) {
+  const list = await tabList();
   if (!Array.isArray(list)) return prev;                        // headless not answering: keep what we have
   let next = prev.next || 1;
   const tabs = list.filter(t => /^https?:\/\//.test(t.url || '')).map(t => ({ id: 'S' + (t.tabId || next++), url: t.url, title: t.title || '' }));
@@ -254,7 +273,7 @@ createServer(async (req, res) => {
   if (path === '/api/pins/restore' && req.method === 'POST') {
     let opened = 0;
     if (live.modes.get().mode === 'stream') {
-      const list = (await agentBrowserJson(['tab', 'list']))?.data?.tabs || [];
+      const list = (await tabList()) || [];
       const tabs = list.map(t => ({ id: t.tabId, url: t.url, title: t.title }));
       const pins = await readPins(), have = applyPins(pins, tabs).order.filter(t => t.pinned).map(t => t.url);
       let blank = list.find(t => t.active && !/^https?:\/\//.test(t.url || ''));
@@ -274,9 +293,9 @@ createServer(async (req, res) => {
     return res.end(JSON.stringify({ pinned: !!a?.pinned, url: a?.url || '', title: a?.title || '' }));
   }
   if (path === '/api/tabs' && req.method === 'GET') {
-    const out = await agentBrowserJson(['tab', 'list']);
+    const list = await tabList();
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
-    return res.end(JSON.stringify((out?.data?.tabs ?? []).map(t => ({ id: t.tabId, targetId: t.targetId, title: t.title, url: t.url, active: !!t.active }))));
+    return res.end(JSON.stringify((list ?? []).map(t => ({ id: t.tabId, targetId: t.targetId, title: t.title, url: t.url, active: !!t.active }))));
   }
   if (path.startsWith('/api/tabs/') && req.method === 'POST') {
     let body = ''; for await (const chunk of req) body += chunk;

@@ -215,10 +215,19 @@ function setTabs(list) {
   const k = JSON.stringify(list);
   if (k === tabsKey) return;
   tabs = list; tabsKey = k;
-  if (drawer.classList.contains('open')) renderTabs();
+  if (drawer.classList.contains('open')) { renderTabs(); loadTitles(); }
 }
+// The stream's tab list keeps the title a tab had when it opened (often its URL); the server reads the current
+// titles from Chrome. Fetched when the drawer opens and when the list changes while it's open (Stream only).
+const titles = new Map(); let titlesBusy = false;
+async function loadTitles() {
+  if (isLive() || titlesBusy) return; titlesBusy = true;
+  try { for (const t of await (await fetch('/api/tabs', { cache: 'no-store' })).json()) if (t.title) titles.set(String(t.id), t.title); } catch {}
+  titlesBusy = false; if (drawer.classList.contains('open')) renderTabs();
+}
+const tabTitle = t => (!isLive() && titles.get(String(t.id))) || t.title || t.url || t.id;
 const openDrawer = async () => {
-  drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs(); loadPins();
+  drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs(); loadPins(); loadTitles();
   if (!tabs.length && !isLive()) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
 };
 const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
@@ -238,7 +247,7 @@ async function loadPins() {
 }
 async function togglePin(t) {
   const r = await fetch('/api/pins', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ op: t.pinned ? 'unpin' : 'pin', id: String(t.id), url: t.url || '', title: t.title || '' }) });
+    body: JSON.stringify({ op: t.pinned ? 'unpin' : 'pin', id: String(t.id), url: t.url || '', title: tabTitle(t) }) });
   const j = await r.json().catch(() => null);
   if (!j?.ok) { addLog('warn', 'pin: only a loaded web page can be pinned'); return; }
   pins = j.pins; renderTabs();
@@ -250,7 +259,7 @@ function renderTabs() {
   for (const t of shown) {
     const li = document.createElement('li'); if (t.active) li.classList.add('active'); if (t.pinned) li.classList.add('pinned');
     const body = document.createElement('div'); body.className = 't';
-    const title = document.createElement('span'); title.className = 'title'; title.textContent = t.title || t.url || t.id;
+    const title = document.createElement('span'); title.className = 'title'; title.textContent = tabTitle(t);
     const u = document.createElement('span'); u.className = 'u'; u.textContent = t.url || '';
     body.append(title, u);
     body.onclick = async () => { await nav.tabSwitch(t.id); closeDrawer(); };
@@ -269,7 +278,7 @@ function renderTabs() {
     pin.innerHTML = `<svg><use href="icons.svg#${t.pinned ? 'pin--filled' : 'pin'}"/></svg>`;
     pin.onclick = e => { e.stopPropagation(); togglePin(t); };
     if (t.pinned) x.classList.add('hidden');                // unpin first to close a pinned tab
-    li.append(body, pin, x, ask); list.appendChild(li);
+    li.append(pin, body, x, ask); list.appendChild(li);   // pin first: it stays put whether or not the × shows
   }
 }
 
