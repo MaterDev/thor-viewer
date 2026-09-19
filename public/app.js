@@ -146,6 +146,8 @@ $('urlBtn').onclick = openUrlBar;
 $('urlClose').onclick = closeUrlBar;
 urlEl.addEventListener('input', () => { urlEdited = true; renderHistory(); });
 $('back').onclick = () => api('/api/nav/back');
+$('urlReload').onclick = () => api('/api/nav/reload');
+$('refreshBtn').onclick = () => api('/api/nav/reload');
 $('forward').onclick = () => api('/api/nav/forward');
 $('urlbar').onsubmit = e => {
   e.preventDefault();

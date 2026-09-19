@@ -15,6 +15,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 .ib.corner { position: fixed; top: max(6px, env(safe-area-inset-top)); z-index: 20; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--glow); backdrop-filter: blur(6px); opacity: .9; }
 #tabsBtn { left: 8px; }
 #urlBtn { right: 8px; }
+#refreshBtn { right: 56px; }
+body:has(#urlwrap.open) #refreshBtn { display: none; }
 
 /* panels: dark glass with a thin cyan edge and corner tick */
 .panel { background: var(--panel); border: 1px solid var(--line); box-shadow: var(--glow); backdrop-filter: blur(8px); position: relative; }
@@ -89,7 +91,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #histList .hu { display: block; font: 10px var(--mono); color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #histList .empty { padding: 10px; color: var(--ink-dim); font: 11px var(--mono); }
 
-#stats { position: fixed; top: max(6px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 18; height: 22px; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 120px); padding: 0 12px; background: rgba(8, 14, 20, .42); border: 1px solid rgba(94, 224, 255, .18); border-radius: 11px; backdrop-filter: blur(4px); font: 10px var(--mono); letter-spacing: .06em; color: var(--ink-dim); white-space: nowrap; overflow: hidden; pointer-events: none; opacity: .85; }
+#stats { position: fixed; top: max(6px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 18; height: 22px; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 216px); padding: 0 12px; background: rgba(8, 14, 20, .42); border: 1px solid rgba(94, 224, 255, .18); border-radius: 11px; backdrop-filter: blur(4px); font: 10px var(--mono); letter-spacing: .06em; color: var(--ink-dim); white-space: nowrap; overflow: hidden; pointer-events: none; opacity: .85; }
 #stats .v { color: var(--accent); }
 #stats .sep { color: var(--ink-dim); opacity: .5; }
 #stats.hidden { display: none; }
