@@ -14,6 +14,9 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
 const AGENT_BROWSER = '/home/key/.local/bin/agent-browser';
 // The server's own calls always mean the headless `thor` session, never the routing gate's Live target.
 const AB_ENV = { env: { ...process.env, THOR_GATE: 'off' } };
+// The headless page this server drives (tabs, open, viewport, errors, theme): the `thor` session, or another one
+// in tests via HEADLESS_AB_ARGS (e.g. "--session x --profile y"), the same variable headless.mjs uses.
+const AB_ARGS = (process.env.HEADLESS_AB_ARGS || '').split(' ').filter(Boolean);
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -25,7 +28,7 @@ const TYPES = {
 
 function setViewport(w, h) {
   return new Promise(resolve => {
-    execFile(AGENT_BROWSER, ["set", "viewport", String(w), String(h)], { timeout: 15000, ...AB_ENV }, err => resolve(!err));
+    execFile(AGENT_BROWSER, [...AB_ARGS, "set", "viewport", String(w), String(h)], { timeout: 15000, ...AB_ENV }, err => resolve(!err));
   });
 }
 
@@ -33,18 +36,18 @@ const INPUT_LOG = '/home/key/.cache/thor-viewer-input.log';
 const NAV = { back: ['back'], forward: ['forward'], reload: ['reload'] };
 const TAB_REF = /^(t\d+|[A-F0-9]{32})$/;
 function agentBrowserJson(args) {
-  return new Promise(resolve => execFile(AGENT_BROWSER, [...args, '--json'], { timeout: 15000, ...AB_ENV }, (err, stdout) => {
+  return new Promise(resolve => execFile(AGENT_BROWSER, [...AB_ARGS, ...args, '--json'], { timeout: 15000, ...AB_ENV }, (err, stdout) => {
     try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
   }));
 }
 function runAgentBrowser(args) {
-  return new Promise(resolve => execFile(AGENT_BROWSER, args, { timeout: 15000, ...AB_ENV }, err => resolve(!err)));
+  return new Promise(resolve => execFile(AGENT_BROWSER, [...AB_ARGS, ...args], { timeout: 15000, ...AB_ENV }, err => resolve(!err)));
 }
 
 // ---------- theme: one choice for the viewer shell AND the hosted page (Theme contract, CLAUDE.md) ----------
 // Persisted server-side so every mode and page gets it. Applying = one small script in the hosted page that
 // sets <html data-theme> and dispatches a 'thor:theme' event; pages without the contract are unaffected.
-const THEME_FILE = '/home/key/.cache/thor-viewer-theme';
+const THEME_FILE = process.env.THOR_THEME_FILE || '/home/key/.cache/thor-viewer-theme';
 const THEMES = ['standard', 'solid'];
 async function getTheme() { try { const t = (await readFile(THEME_FILE, 'utf8')).trim(); return THEMES.includes(t) ? t : 'standard'; } catch { return 'standard'; } }
 const themeJs = t => `(() => { const t = ${JSON.stringify(t)}; const go = () => { const r = document.documentElement; if (!r) return;
@@ -59,9 +62,33 @@ async function applyTheme(force = false) {
 }
 live.onLiveContext(() => applyTheme().catch(() => {}));
 
+// the shared tab list: { tabs: [{ id, url, title }], active, next }, persisted so every mode and reload gets it
+const TABS_FILE = process.env.THOR_TABS_FILE || '/home/key/.cache/thor-viewer-tabs.json';
+function cleanShared(s) {
+  if (!s || !Array.isArray(s.tabs)) return null;
+  const seen = new Set(), tabs = [];
+  for (const t of s.tabs.slice(0, 50)) {                    // no duplicates by URL (the active one wins its URL)
+    if (!t || typeof t.id !== 'string' || typeof t.url !== 'string') continue;
+    const dup = t.url && seen.has(t.url) && t.id !== s.active; if (dup) continue;
+    if (t.url) seen.add(t.url); tabs.push({ id: t.id, url: t.url, title: String(t.title || '').slice(0, 200) });
+  }
+  const active = tabs.some(t => t.id === s.active) ? s.active : tabs[tabs.length - 1]?.id || null;
+  return { tabs, active, next: Math.max(Number(s.next) || 1, tabs.length + 1) };
+}
+async function readShared() { try { return cleanShared(JSON.parse(await readFile(TABS_FILE, 'utf8'))) || { tabs: [], active: null, next: 1 }; } catch { return { tabs: [], active: null, next: 1 }; } }
+async function writeShared(s) { await writeFile(TABS_FILE, JSON.stringify(s)); }
+async function sharedFromHeadless(prev) {
+  const out = await agentBrowserJson(['tab', 'list']), list = out?.data?.tabs;
+  if (!Array.isArray(list)) return prev;                        // headless not answering: keep what we have
+  let next = prev.next || 1;
+  const tabs = list.filter(t => /^https?:\/\//.test(t.url || '')).map(t => ({ id: 'S' + (t.tabId || next++), url: t.url, title: t.title || '' }));
+  const act = list.find(t => t.active), s = cleanShared({ tabs, active: act ? 'S' + act.tabId : null, next });
+  await writeShared(s); return s;
+}
+
 function pageErrors() {
   return new Promise(resolve => {
-    execFile(AGENT_BROWSER, ['errors', '--json'], { timeout: 10000, ...AB_ENV }, (err, stdout) => {
+    execFile(AGENT_BROWSER, [...AB_ARGS, 'errors', '--json'], { timeout: 10000, ...AB_ENV }, (err, stdout) => {
       try { resolve(JSON.parse(stdout).data?.errors ?? []); } catch { resolve([]); }
     });
   });
@@ -150,6 +177,26 @@ createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     appendFile(INPUT_LOG, new Date().toISOString() + ' ' + body.slice(0, 2000) + '\n').catch(() => {});
     res.writeHead(204); return res.end();
+  }
+  // ---------- ONE shared tab list for Stream and Live (the viewer server owns it) ----------
+  // Stream: the headless browser's tabs ARE the list; reading refreshes it from there. Live: the live client
+  // writes it (open, switch, close, title). Entering Live reads it (so Live starts on the stream's active tab);
+  // leaving Live points the headless page at Live's active URL (/api/shared-tabs/to-stream).
+  if (path === '/api/shared-tabs' && req.method === 'GET') {
+    let s = await readShared();
+    if (live.modes.get().mode === 'stream' && !new URL(req.url, 'http://x').searchParams.has('raw')) s = await sharedFromHeadless(s);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' }); return res.end(JSON.stringify(s));
+  }
+  if (path.startsWith('/api/shared-tabs') && req.method === 'POST') {
+    if (!/^application\/json/.test(req.headers['content-type'] || '')) { res.writeHead(415); return res.end(); }
+    let body = ''; for await (const c of req) body += c;
+    let ok = false;
+    if (path === '/api/shared-tabs') { const s = cleanShared(JSON.parse(body || '{}')); if (s) { await writeShared(s); ok = true; } }
+    else if (path === '/api/shared-tabs/to-stream') {
+      const s = await readShared(), a = s.tabs.find(t => t.id === s.active);
+      ok = !a || !/^https?:\/\//.test(a.url) ? true : await runAgentBrowser(['open', a.url]);
+    }
+    res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok }));
   }
   if (path === '/api/tabs' && req.method === 'GET') {
     const out = await agentBrowserJson(['tab', 'list']);

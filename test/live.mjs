@@ -57,7 +57,10 @@ try {
   setTemp(50);
   serve(process.execPath, ['server.mjs'], { PORT: String(VIEWER), LIVE_CDP: 'http://127.0.0.1:4856', LIVE_PAUSE_HEADLESS: 'always',
     LIVE_THERMAL_FILE: join(tmp, 'thermal'), LIVE_HEAT_HOLD_MS: '2000', LIVE_HEAT_FILE: join(tmp, 'heat.json'),
-    HEADLESS_AB_ARGS: PARK.join(' '), LIVE_NOTIFY: '0', LIVE_MODE_FILE: join(tmp, 'mode'), LIVE_MODE_LOG: join(tmp, 'modes.log') });
+    HEADLESS_AB_ARGS: PARK.join(' '), LIVE_NOTIFY: '0', LIVE_MODE_FILE: join(tmp, 'mode'), LIVE_MODE_LOG: join(tmp, 'modes.log'),
+    THOR_TABS_FILE: join(tmp, 'tabs.json'), THOR_THEME_FILE: join(tmp, 'theme') });
+  // Tabs are one shared list owned by the server: the (test) headless page shows the fixture, and Live starts on it.
+  await ab([...PARK, 'open', `${F}/`]);
   // A ticking page in the headless session: rAF and timer counters, some scroll.
   await ab([...PARK, 'eval', "window.__n=0;(function f(){__n++;requestAnimationFrame(f)})();window.__t=0;setInterval(()=>__t++,100);document.body.style.height='3000px';scrollTo(0,321);1"]);
   await until(() => fetch(V + '/').then(r => r.ok, () => false), 8000);
@@ -66,7 +69,7 @@ try {
 
   // Enter Live mode on load, with one live tab on the fixture.
   await ab([...HOST, 'open', `${V}/manifest.webmanifest`]);
-  await evalHost(`localStorage.setItem('thorMode','live'); localStorage.setItem('thorLiveTabs', JSON.stringify({tabs:[{id:'L1',url:'${F}/',title:''}],active:'L1',next:2})); 1`);
+  await evalHost(`localStorage.setItem('thorMode','live'); 1`);
   await ab([...HOST, 'open', `${V}/`]);
   const st = await until(async () => { const s = await get('/api/live/status'); return s.attached && s.frameUrl ? s : null; });
   check('bridge attaches to the viewer page and finds the live frame', st?.frameUrl === `${F}/`, st);

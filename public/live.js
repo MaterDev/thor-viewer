@@ -5,17 +5,18 @@
 // reports the frame's URL, title, console and errors as server-sent events. The agent drives the
 // same frame through that CDP target (see tools/live-agent.sh).
 //
-// Live tabs are the viewer's own list (localStorage thorLiveTabs). Only the active one is loaded;
-// switching reloads it, so hidden tabs never run (the work inside is often GPU-heavy).
+// Tabs are ONE list shared with Stream, owned by the viewer server (/api/shared-tabs): entering Live reads it
+// (starting on the stream's active tab), every change here writes it, and leaving Live points the headless page
+// at the active URL. Only the active tab is loaded; switching reloads it, so hidden tabs never run.
 const FRAME_NAME = 'thorLive';
-const STORE = 'thorLiveTabs';
+const OLD_STORE = 'thorLiveTabs';                         // the old per-browser Live list: removed, the server owns tabs now
 const post = (path, body) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })
   .then(r => r.json()).catch(() => ({ ok: false, reason: 'viewer server not reachable' }));
 
 export function create(shell) {
   let state = { tabs: [], active: null, next: 1 };
-  try { const s = JSON.parse(localStorage.getItem(STORE) || 'null'); if (s && Array.isArray(s.tabs)) state = s; } catch {}
-  const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch {} };
+  try { localStorage.removeItem(OLD_STORE); } catch {}
+  const save = () => post('/api/shared-tabs', state);
   const token = (crypto.randomUUID?.() || String(Math.random()).slice(2)) + '';
   window.__thorLiveToken = token;                        // how the server finds this page over CDP
 
@@ -78,9 +79,11 @@ export function create(shell) {
   }
 
   const this_ = {
-    enter() {
+    async enter() {
       on = true; shell.status('');
-      if (!state.tabs.length) {                         // first time: take the page the stream was showing
+      try { const s = await (await fetch('/api/shared-tabs', { cache: 'no-store' })).json(); if (s && Array.isArray(s.tabs)) state = s; } catch {}   // read while still Stream: the headless tabs
+      if (!on) return;
+      if (!state.tabs.length) {                         // nothing shared yet: take the page the stream was showing
         const u = shell.streamUrl();
         if (/^https?:\/\//.test(u)) { state.tabs.push({ id: 'L' + state.next++, url: u, title: '' }); state.active = state.tabs[0].id; save(); }
       }
@@ -89,7 +92,8 @@ export function create(shell) {
     },
     exit() {
       on = false;
-      events?.close(); events = null; post('/api/live/stop');
+      events?.close(); events = null;
+      post('/api/live/stop').then(() => post('/api/shared-tabs/to-stream'));   // the headless page follows Live's active tab
       frameEl?.remove(); frameEl = null; emptyEl?.remove(); emptyEl = null; note(0);
     },
     open(url) {
