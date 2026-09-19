@@ -461,10 +461,10 @@ function showMode() {
   const b = $('modeBtn'); b.dataset.mode = mode;
   b.title = mode === 'live' ? 'Live page: tap for the stream' : 'Stream: tap for the live page';
 }
-async function setMode(m) {
+async function setMode(m, persist = true) {
   if (m === mode && (m === 'stream' ? streamOn : live)) return;
   const was = mode; mode = m; showMode();
-  try { localStorage.setItem('thorMode', m); } catch {}
+  if (persist) try { localStorage.setItem('thorMode', m); } catch {}
   tabs = []; tabsKey = ''; shell.clearLog(); closeDrawer();
   if (m === 'live') {
     streamStop();
@@ -476,6 +476,17 @@ async function setMode(m) {
   }
 }
 $('modeBtn').onclick = () => setMode(mode === 'live' ? 'stream' : 'live');
+// Small glass notice, top centre; built on first use, removed when it times out (nothing left rendering).
+let noticeEl = null, noticeTimer = null;
+function notice(msg, ms = 7000) {
+  clearTimeout(noticeTimer);
+  if (!noticeEl) { noticeEl = document.createElement('div'); noticeEl.id = 'notice'; noticeEl.setAttribute('role', 'status'); document.body.appendChild(noticeEl); }
+  noticeEl.textContent = msg;
+  noticeTimer = setTimeout(() => { noticeEl?.remove(); noticeEl = null; }, ms);
+}
+// Live could not start or lost its connection: back to Stream for now. Key's choice (thorMode) is kept,
+// so the next open tries Live again.
+shell.fallback = reason => { if (mode !== 'live') return; setMode('stream', false); notice('Live is unavailable, showing Stream. ' + (reason || '')); };
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout(); showMode();

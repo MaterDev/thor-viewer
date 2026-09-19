@@ -54,15 +54,26 @@ export function create(shell) {
     else if (ev.type === 'console' || ev.type === 'error') shell.addLog(ev.level || 'log', ev.text);
     else if (ev.type === 'mode') note(ev.mode === 'borrowed' ? ev.until : 0);
     else if (ev.type === 'open' && ev.url) this_.open(ev.url);   // the agent asked to open a page
+    else if (ev.type === 'fallback' && on) shell.fallback(ev.reason);
     else if (ev.type === 'state' && ev.attached === false && on && ev.reason) shell.addLog('warning', 'live: ' + ev.reason);
   }
 
   async function attach() {
+    let failures = 0, opened = false;
     events = new EventSource('/api/live/events');       // closing it ends the server's CDP attachment
     events.onmessage = m => { try { onEvent(JSON.parse(m.data)); } catch {} };
+    events.onopen = () => {
+      failures = 0;
+      if (opened && on) start();                          // the server restarted: attach again
+      opened = true;
+    };
+    events.onerror = () => { if (on && ++failures >= 3) shell.fallback('The viewer server is not answering.'); };
+    await start();
+  }
+  async function start() {
     const r = await post('/api/live/start', { token });
     if (!on) return;
-    if (!r.ok) shell.addLog('warning', 'live: agent not attached · ' + (r.reason || 'unknown') + ' (the page still works; Key can use it)');
+    if (!r.ok) shell.fallback(r.reason || 'unknown reason');
     else shell.addLog('info', 'live: agent attached to this page');
   }
 

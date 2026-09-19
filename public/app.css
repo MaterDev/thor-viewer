@@ -167,7 +167,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #liveFrame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; z-index: 1; }
 #liveEmpty { position: fixed; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; color: var(--ink-muted); font: 13px var(--sans); }
 #status { z-index: 5; }
-#liveNote { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 26; max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: var(--radius-ctl);
+#notice, #liveNote { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 26; max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: var(--radius-ctl);
   font: 13px var(--sans); color: var(--ink); text-shadow: var(--halo);
   background: var(--glass-sheen), linear-gradient(var(--glass-tint), var(--glass-tint)), linear-gradient(var(--glass-scrim), var(--glass-scrim));
   border: 1px solid var(--glass-edge); box-shadow: var(--glass-specular), var(--glass-shadow); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }

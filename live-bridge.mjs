@@ -25,6 +25,16 @@ import { freezeHeadless, thawHeadless } from './headless.mjs';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 const MODE_FILE = process.env.LIVE_MODE_FILE || '/home/key/.cache/thor-viewer-mode';
 const MODE_LOG = process.env.LIVE_MODE_LOG || '/home/key/.cache/thor-viewer-modes.log';
+// Pause the headless page in Live only when agents cannot hit it by accident: that needs the routing
+// gate installed as the agent-browser wrapper. Without it an agent's command would go to a paused
+// page and hang, so the headless page keeps running (it costs some GPU, it breaks nothing).
+// LIVE_PAUSE_HEADLESS = auto (default) | always | never.
+const WRAPPER = process.env.AGENT_BROWSER || '/home/key/.local/bin/agent-browser';
+export async function gateInstalled() { try { return (await readFile(WRAPPER, 'utf8')).includes('agent-browser gate'); } catch { return false; } }
+async function shouldPauseHeadless() {
+  const p = process.env.LIVE_PAUSE_HEADLESS || 'auto';
+  return p === 'always' || (p === 'auto' && await gateInstalled());
+}
 const LEAVE_GRACE = 3000;           // a viewer reload in Live mode reconnects within this; don't bounce modes
 const LOG_KEEP = 300;
 
@@ -93,7 +103,7 @@ export async function recoverAtStartup() {
   if (last === 'live' || last === 'borrowed') { try { await thawHeadless(); } catch {} writeFile(MODE_FILE, 'stream\n').catch(() => {}); }
 }
 export const modes = createModes({
-  freezeHeadless, thawHeadless,
+  freezeHeadless: async () => (await shouldPauseHeadless()) ? freezeHeadless() : 0, thawHeadless,
   pauseLive: async until => {
     emit({ type: 'mode', mode: 'borrowed', until });
     borrowNotice(until);
@@ -248,6 +258,7 @@ export function stop(removeForward = true) {
 // The viewer page is gone (navigated, reloaded, closed): detach now and end its event streams, which
 // can outlive the page on Android. A viewer that comes back in Live mode starts over.
 function viewerGone(why) {
+  emit({ type: 'fallback', reason: why });              // the viewer goes back to Stream and says why
   stop();
   for (const res of S.clients) { try { res.end(); } catch {} }
   S.clients.clear();
@@ -310,10 +321,15 @@ export async function handle(req, res, path, readBody) {
   if (!/^application\/json/.test(req.headers['content-type'] || '')) { json(415, { ok: false, reason: 'application/json only' }); return true; }
   let body = {}; try { body = JSON.parse(await readBody() || '{}'); } catch {}
   if (op === 'start') {
-    const m = await modes.enterLive({});                        // freezes the headless page first
+    const m = await modes.enterLive({});                        // pauses the headless page first (see above)
     if (!m.ok) { json(409, m); return true; }
     const origin = `http://${req.headers.host}/`; S.origin = origin;
-    json(200, await start(String(body.token || ''), origin)); return true;
+    const r = await start(String(body.token || ''), origin);
+    if (!r.ok) {                                                // auto-fallback: never stay in a half Live
+      stop(); await modes.leaveLive('Live could not start: ' + (r.reason || 'unknown'));
+      json(200, { ...r, fallback: true }); return true;
+    }
+    json(200, r); return true;
   }
   if (op === 'stop') { stop(); json(200, await modes.leaveLive('viewer switched to Stream')); return true; }
   if (op === 'nav' && NAV_JS[body.op]) { json(200, await evalInFrame(NAV_JS[body.op])); return true; }

@@ -12,6 +12,8 @@ import * as live from './live-bridge.mjs';   // Live Page Mode (CDP to the viewe
 const PORT = Number(process.env.PORT || 4850);
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
 const AGENT_BROWSER = '/home/key/.local/bin/agent-browser';
+// The server's own calls always mean the headless `thor` session, never the routing gate's Live target.
+const AB_ENV = { env: { ...process.env, THOR_GATE: 'off' } };
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -23,7 +25,7 @@ const TYPES = {
 
 function setViewport(w, h) {
   return new Promise(resolve => {
-    execFile(AGENT_BROWSER, ["set", "viewport", String(w), String(h)], { timeout: 15000 }, err => resolve(!err));
+    execFile(AGENT_BROWSER, ["set", "viewport", String(w), String(h)], { timeout: 15000, ...AB_ENV }, err => resolve(!err));
   });
 }
 
@@ -31,17 +33,17 @@ const INPUT_LOG = '/home/key/.cache/thor-viewer-input.log';
 const NAV = { back: ['back'], forward: ['forward'], reload: ['reload'] };
 const TAB_REF = /^(t\d+|[A-F0-9]{32})$/;
 function agentBrowserJson(args) {
-  return new Promise(resolve => execFile(AGENT_BROWSER, [...args, '--json'], { timeout: 15000 }, (err, stdout) => {
+  return new Promise(resolve => execFile(AGENT_BROWSER, [...args, '--json'], { timeout: 15000, ...AB_ENV }, (err, stdout) => {
     try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
   }));
 }
 function runAgentBrowser(args) {
-  return new Promise(resolve => execFile(AGENT_BROWSER, args, { timeout: 15000 }, err => resolve(!err)));
+  return new Promise(resolve => execFile(AGENT_BROWSER, args, { timeout: 15000, ...AB_ENV }, err => resolve(!err)));
 }
 
 function pageErrors() {
   return new Promise(resolve => {
-    execFile(AGENT_BROWSER, ['errors', '--json'], { timeout: 10000 }, (err, stdout) => {
+    execFile(AGENT_BROWSER, ['errors', '--json'], { timeout: 10000, ...AB_ENV }, (err, stdout) => {
       try { resolve(JSON.parse(stdout).data?.errors ?? []); } catch { resolve([]); }
     });
   });
