@@ -60,6 +60,10 @@ try {
   check('stats bar centered between the corner buttons and shows fps', !!stats && stats.gap && stats.hasFps, JSON.stringify(stats));
   const temp = await (await fetch(`${VIEWER}api/temp`).catch(()=>({json:async()=>({})}))).json();
   check('/api/temp returns a numeric battery temperature', typeof temp.battery === 'number' && temp.battery > 0 && temp.battery < 100, JSON.stringify(temp));
+  check('/api/temp also returns body, CPU and GPU (C)', ['body', 'cpu', 'gpu'].every(k => typeof temp[k] === 'number' && temp[k] > 0 && temp[k] < 130), JSON.stringify(temp));
+  const tp = await until(() => page.evaluate(() => { const t = document.getElementById('temps'), h = document.getElementById('heatBtn').getBoundingClientRect(), tabs = document.getElementById('tabsBtn').getBoundingClientRect(), url = document.getElementById('urlBtn').getBoundingClientRect(), m = document.getElementById('modeBtn').getBoundingClientRect();
+    return t && t.children.length ? { n: t.children.length, f: /°/.test(t.textContent), labels: [...t.children].every(c => /degrees Fahrenheit/.test(c.getAttribute('aria-label'))), heat48: h.width >= 48 && h.height >= 48, clear: h.left > tabs.right && m.right < url.left, fits: t.scrollWidth <= t.clientWidth + 1 } : null; }), 8000);
+  check('temperatures in °F beside the heat-guard thermometer, labelled, no clipping or overlap', !!tp && tp.n >= 3 && tp.f && tp.labels && tp.heat48 && tp.clear && tp.fits, JSON.stringify(tp));
 
   // Remote page geometry -> viewer canvas coordinates
   const rects = await abEval(`JSON.stringify(Object.fromEntries(['t','n','g','x','tap'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [id, { x: r.x + r.width / 2, y: r.y + r.height / 2 }]; })))`);

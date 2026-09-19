@@ -3,7 +3,7 @@
 // errors (the live stream carries console output but not exceptions).
 // Run: node server.mjs   (prints the URL)
 import { createServer } from 'node:http';
-import { readFile, stat, appendFile } from 'node:fs/promises';
+import { readFile, stat, appendFile, readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,6 +64,28 @@ async function hotZonePaths() {
   }
   return HOT_ZONE_PATHS;
 }
+// Thermal zones by type, listed once; each /api/temp then reads only the few files it needs (the client polls
+// only while the stats bar is shown). body = xo-therm (board; this device has no skin zone), cpu = max of
+// cpu-* / cpuss-*, gpu = max of gpuss-*. All in C (the client shows F).
+let zoneMap = null;
+async function zones() {
+  if (zoneMap) return zoneMap;
+  zoneMap = { battery: [], body: [], cpu: [], gpu: [] };
+  try {
+    for (const z of await readdir('/sys/class/thermal')) {
+      if (!z.startsWith('thermal_zone')) continue;
+      let type = ''; try { type = (await readFile(`/sys/class/thermal/${z}/type`, 'utf8')).trim(); } catch { continue; }
+      const k = type === 'battery' ? 'battery' : type === 'xo-therm' ? 'body' : /^cpu(ss)?-/.test(type) ? 'cpu' : /^gpuss-/.test(type) ? 'gpu' : null;
+      if (k) zoneMap[k].push(`/sys/class/thermal/${z}/temp`);
+    }
+  } catch {}
+  return zoneMap;
+}
+async function maxOf(paths) {
+  let max = -Infinity;
+  for (const p of paths) { try { const v = parseInt(await readFile(p, 'utf8'), 10); if (Number.isFinite(v) && v > max) max = v; } catch {} }
+  return max > -Infinity ? Math.round(max / 100) / 10 : null;
+}
 async function readTemp() {
   let battery = null, soc = null;
   try { const v = parseInt(await readFile('/sys/class/power_supply/battery/temp', 'utf8'), 10); if (Number.isFinite(v)) battery = Math.round(v) / 10; } catch {}
@@ -72,7 +94,9 @@ async function readTemp() {
     for (const path of await hotZonePaths()) { try { const v = parseInt(await readFile(path, 'utf8'), 10); if (Number.isFinite(v) && v > max) max = v; } catch {} }
     if (max > 0) soc = Math.round(max / 100) / 10;
   } catch {}
-  return { battery, soc };
+  const z = await zones();
+  const [zb, body, cpu, gpu] = await Promise.all([maxOf(z.battery), maxOf(z.body), maxOf(z.cpu), maxOf(z.gpu)]);
+  return { battery: battery ?? zb, soc, body, cpu, gpu };
 }
 
 createServer(async (req, res) => {

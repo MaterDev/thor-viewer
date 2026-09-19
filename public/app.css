@@ -196,3 +196,21 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
   font: 13px var(--sans); color: var(--ink); text-shadow: var(--halo);
   background: var(--glass-sheen), linear-gradient(var(--glass-tint), var(--glass-tint)), linear-gradient(var(--glass-scrim), var(--glass-scrim));
   border: 1px solid var(--glass-edge); box-shadow: var(--glass-specular), var(--glass-shadow); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
+
+/* temperatures (°F) beside the heat-guard thermometer, left of the Stream|Live pill; readouts only, the
+   thermometer is the button (48px hit area). Narrow screens keep battery + CPU. */
+#temps { align-self: flex-start; margin: 6px 4px 0 0; height: 22px; display: flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: var(--radius-pill);
+  background: var(--glass-sheen), linear-gradient(var(--glass-tint), var(--glass-tint)), linear-gradient(var(--glass-scrim), var(--glass-scrim));
+  border: 1px solid var(--glass-edge); box-shadow: var(--glass-specular), var(--glass-shadow); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  font: 600 11px var(--sans); font-variant-numeric: tabular-nums; color: var(--ink); text-shadow: var(--halo); white-space: nowrap; }
+#temps:empty, #temps.hidden { display: none; }
+#temps .t { display: inline-flex; align-items: center; gap: 2px; }
+#temps svg { width: 10px; height: 10px; fill: var(--ink-muted); }
+#temps .warm { color: #ffd78a; } #temps .hot { color: #ffa0a0; }
+/* narrow (phone portrait): the heat/temps/mode group is centred across the top, and the thin stats bar moves to a
+   second line; body and GPU readouts and the resolution are dropped */
+@media (max-width: 640px) {
+  #temps [data-k="body"], #temps [data-k="gpu"], #stats .res { display: none; }
+  #modeSlot { left: 56px; right: 96px; transform: none; justify-content: center; }   /* the space between the drawer button and the address+refresh pair */
+  #stats { top: calc(max(6px, env(safe-area-inset-top)) + 28px); left: 50%; transform: translateX(-50%); max-width: calc(100vw - 112px); }
+}
