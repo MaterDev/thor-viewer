@@ -20,6 +20,13 @@ const USES_ADB = !process.env.LIVE_CDP;
 const ADB = process.env.LIVE_ADB || 'adb';
 const THOR_ADB = process.env.THOR_ADB_SCRIPT || '/code/projects/thor-infrastructure/bin/thor-adb';
 const FRAME_NAME = 'thorLive';
+// One GPU: while Live mode is on, the headless agent-browser session must not render the same page.
+// It is "parked" on about:blank with its screencast off, and restored when Live mode ends.
+const AGENT_BROWSER = process.env.AGENT_BROWSER || '/home/key/.local/bin/agent-browser';
+const PARK = process.env.LIVE_PARK !== '0';
+const PARK_ARGS = (process.env.LIVE_PARK_ARGS || '').split(' ').filter(Boolean);   // e.g. "--session x --profile y" in tests
+const STREAM_PORT = process.env.LIVE_STREAM_PORT || '9223';
+const UNPARK_DELAY = 3000;          // a viewer reload in Live mode reconnects within this; don't bounce the headless page
 const LOG_KEEP = 300;
 
 const run = (cmd, args, timeout) => new Promise(resolve =>
@@ -68,9 +75,41 @@ const S = {
   liveSession: null,          // set when the iframe is out-of-process (its own CDP session)
   contexts: new Map(),        // `${session||''}:${contextId}` -> frameId
   url: '', title: '', logs: [], clients: new Set(), createdForward: false, starting: null,
+  parked: null,                // { url } of the headless session before Live mode took over
+  fallback: false,             // the agent has the page loaded headless right now (WebGL look)
+  unparkTimer: null,
+  lastLiveUrl: '',             // survives stop(): the page Stream mode gets back
 };
+const ab = (args, ms = 20000) => run(AGENT_BROWSER, [...PARK_ARGS, ...args], ms);
+
+// Park the headless session: remember its URL, stop its screencast, blank it.
+export async function park() {
+  clearTimeout(S.unparkTimer); S.unparkTimer = null;
+  if (!PARK || S.parked) return { ok: true, parked: S.parked };
+  const url = (await ab(['get', 'url'], 10000)).out.trim().split('\n').pop();
+  S.parked = { url: /^https?:/.test(url) ? url : '' };
+  await ab(['stream', 'disable'], 10000);
+  await ab(['open', 'about:blank']);
+  return { ok: true, parked: S.parked };
+}
+// Restore it: open the page Live was showing (same URL and params), then its stream on the usual port.
+export async function unpark(url) {
+  if (!S.parked) return { ok: true };
+  const target = /^https?:/.test(url || '') ? url : S.parked.url;
+  S.parked = null; S.fallback = false; S.lastLiveUrl = '';
+  if (target) await ab(['open', target]);
+  const r = await ab(['stream', 'enable', '--port', STREAM_PORT], 10000);
+  return { ok: r.ok, url: target };
+}
+// The agent's WebGL fallback: load the live page headless briefly (on), then blank it again (off).
+async function fallback(on) {
+  if (!S.parked) return { ok: false, reason: 'Live mode is not on' };
+  if (on) { if (!/^https?:/.test(S.url)) return { ok: false, reason: 'no live page' }; S.fallback = true; const r = await ab(['open', S.url]); return { ok: r.ok, url: S.url }; }
+  S.fallback = false; const r = await ab(['open', 'about:blank']); return { ok: r.ok };
+}
 const attached = () => !!S.cdp;
 function emit(ev) {
+  if (ev.type === 'url' && /^https?:/.test(ev.url || '')) S.lastLiveUrl = ev.url;
   if (ev.type === 'console' || ev.type === 'error') { S.logs.push({ t: Date.now(), ...ev }); if (S.logs.length > LOG_KEEP) S.logs.shift(); }
   const line = `data: ${JSON.stringify(ev)}\n\n`;
   for (const res of S.clients) res.write(line);
@@ -193,6 +232,10 @@ export async function start(token, origin) {
 
 export function stop(removeForward = true) {
   const c = S.cdp; S.cdp = null;
+  if (removeForward && S.parked) {                       // leaving Live mode: give the stream its page back
+    clearTimeout(S.unparkTimer);
+    S.unparkTimer = setTimeout(() => { S.unparkTimer = null; if (!S.clients.size) unpark(S.lastLiveUrl); }, UNPARK_DELAY);
+  }
   if (c) c.close();
   Object.assign(S, { targetId: null, token: null, mainFrameId: null, liveFrameId: null, liveSession: null, url: '', title: '', logs: [] });
   S.contexts.clear();
@@ -211,7 +254,7 @@ export async function evalInFrame(expression) {
 }
 
 export function status() {
-  return { attached: attached(), endpoint: ENDPOINT, targetId: S.targetId, frameUrl: S.url, title: S.title, outOfProcess: !!S.liveSession, clients: S.clients.size };
+  return { attached: attached(), parked: S.parked, fallback: S.fallback, endpoint: ENDPOINT, targetId: S.targetId, frameUrl: S.url, title: S.title, outOfProcess: !!S.liveSession, clients: S.clients.size };
 }
 
 const NAV_JS = { back: 'history.back()', forward: 'history.forward()', reload: 'location.reload()' };
@@ -235,11 +278,13 @@ export async function handle(req, res, path, readBody) {
   if (!/^application\/json/.test(req.headers['content-type'] || '')) { json(415, { ok: false, reason: 'application/json only' }); return true; }
   let body = {}; try { body = JSON.parse(await readBody() || '{}'); } catch {}
   if (op === 'start') {
+    await park();                                      // before anything else: free the GPU
     const origin = `http://${req.headers.host}/`;
     json(200, await start(String(body.token || ''), origin)); return true;
   }
   if (op === 'stop') { stop(); json(200, { ok: true }); return true; }
   if (op === 'nav' && NAV_JS[body.op]) { json(200, await evalInFrame(NAV_JS[body.op])); return true; }
+  if (op === 'fallback') { json(200, await fallback(!!body.on)); return true; }
   if (op === 'eval' && typeof body.expression === 'string') { json(200, await evalInFrame(body.expression)); return true; }
   json(400, { ok: false }); return true;
 }
