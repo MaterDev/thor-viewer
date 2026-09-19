@@ -109,7 +109,7 @@ esac
 # runs over CDP on the viewer page, whose snapshot includes the live frame's elements (use @refs).
 port="${cdp##*:}"; port="${port%%/*}"
 unset AGENT_BROWSER_STREAM_PORT
-LIVE=(--session thor-live --cdp "$port")
+LIVE=(--session "${THOR_GATE_LIVE_SESSION:-thor-live}" --cdp "$port")   # tests use their own session name
 # Bind the thor-live session to the viewer page on every call: never act on whatever tab happens to be
 # active (on Android that could be one of Key's Chrome tabs).
 tabs=$("$REAL" "${LIVE[@]}" tab list --json 2>/dev/null | tr '{' '\n')

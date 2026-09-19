@@ -91,6 +91,32 @@ rm -f "$T/real-sleep"; pkill -P $$ -x sleep 2>/dev/null
 live borrowed; ( sleep 1; live live ) &
 g snapshot; check "a plain command waits out someone else's borrow, then goes live" grep -qx -- "--session thor-live --cdp 9222 snapshot" "$T/real.log"
 
+echo "viewer down = exactly today's behaviour (old wrapper vs gate: same args and env reach the binary)"
+OLDW="$ROOT/test/fixtures/wrapper.pre-gate"
+printf '#!/usr/bin/env bash\necho "args=$* session=${AGENT_BROWSER_SESSION:-} port=${AGENT_BROWSER_STREAM_PORT:-} skills=${AGENT_BROWSER_SKILLS_DIR:-} vk=${VK_ICD_FILENAMES:-}"\n' >"$T/real-env"
+chmod +x "$T/real-env"
+sed "s#/home/key/.local/share/agent-browser/bin/agent-browser#$T/real-env#" "$OLDW" >"$T/old"; chmod +x "$T/old"
+same=1
+for argv in "snapshot -i" "open https://x.test/?a=1&b=2" "--session gputest open about:blank" "--session=other eval 1+1" "close --all" "tab list --json"; do
+  a=$(env -u AGENT_BROWSER_SESSION "$T/old" $argv 2>&1)
+  b=$(env -u AGENT_BROWSER_SESSION THOR_VIEWER_URL=http://127.0.0.1:1 THOR_GATE_REAL="$T/real-env" "$GATE" $argv 2>&1)
+  [ "$a" = "$b" ] || { same=0; echo "        differs for: $argv"; echo "        old:  $a"; echo "        gate: $b"; }
+done
+check "identical for 6 command shapes" test "$same" = 1
+s0=$(date +%s%N); THOR_VIEWER_URL=http://10.255.255.1:9 THOR_GATE_REAL="$T/real-env" "$GATE" snapshot >/dev/null 2>&1; ms=$(( ($(date +%s%N) - s0) / 1000000 ))
+check "an unroutable viewer address costs at most the 0.5s check ($ms ms)" test "$ms" -lt 900
+
+echo "install / uninstall"
+I="$ROOT/tools/install-gate.sh"; export GATE_TARGET="$T/bin/agent-browser" GATE_BACKUP="$T/share/wrapper.pre-gate.bak"
+mkdir -p "$T/bin"; cp "$OLDW" "$GATE_TARGET"
+bash "$I" install >/dev/null; check "install puts the gate in place" cmp -s "$GATE" "$GATE_TARGET"
+check "...and backs up the original" cmp -s "$OLDW" "$GATE_BACKUP"
+bash "$I" install >/dev/null; check "installing twice keeps the ORIGINAL backup" cmp -s "$OLDW" "$GATE_BACKUP"
+check "status says installed" grep -q "gate installed (matches" <<<"$(bash "$I" status)"
+bash "$I" uninstall >/dev/null; check "uninstall restores the original byte for byte" cmp -s "$OLDW" "$GATE_TARGET"
+check "status says not installed" grep -q "gate not installed" <<<"$(bash "$I" status)"
+unset GATE_TARGET GATE_BACKUP
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
