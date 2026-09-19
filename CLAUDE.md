@@ -11,14 +11,38 @@ npm run build:icons  # regenerate public/icons.svg from @carbon/icons after edit
 node --import /home/key/.local/share/playwright-mcp/platform-linux.mjs tools/screenshots.mjs   # README images
 ```
 
+`skills/` holds skills the viewer provides to every app shown in it. They're symlinked into `~/.claude/skills/` so they load in any project. `skills/animation-preview/` makes temp clips, frames and contact sheets of what the viewer renders, for review in chat.
+
 Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts agent-browser and its dashboard and prints the URL. Everything dies when the Claude Code process ends; rerun the script.
+
+## Live Page Mode (agents: this is all you need)
+
+- Two modes (toggle top-centre, left of the stats bar): **Stream** (your headless `thor` page, JPEG) and **Live** (Key's real page in the viewer app). Check: `curl -s 127.0.0.1:4850/api/mode`.
+- `~/.local/bin/agent-browser` is the routing gate (`tools/agent-browser-gate`): plain commands follow the mode; in Live they act on Key's page (`@refs` from `snapshot`), `close`/`tab`/`set`/`session`/`stream` are refused. `--headless` borrows your own page for one command. Scripts that always mean the headless page (tests, start.sh, this server) set `THOR_GATE=off`. Install/remove: `bash tools/install-gate.sh install` / `uninstall` (`status` to check).
+- Heat guard (`heat-guard.mjs`): while Live is on the server reads the hottest thermal zone at 1 Hz; above 80°C for 20 s it falls back to Stream (notice with "Back to Live"; no auto-return). The thermometer button beside the mode pill turns it off for 30 min (`/api/heat`, persisted).
+- Live falls back to Stream by itself (with a notice) if adb/CDP is missing or lost; the headless page is paused in Live only while the gate is installed (`LIVE_PAUSE_HEADLESS=auto`). Live tabs: only the active one is loaded; switching reloads it (deliberate).
+- Code: `modes.mjs` (state machine), `live-bridge.mjs`, `headless.mjs`, `public/live.js`. Tests: `npm run test:live`. Risks and mitigations: `docs/live-mode-risks.md`.
 
 ## How it works
 
 - `server.mjs` (Termux node, no runtime dependencies): static files from `public/`, plus a small API where each route is one agent-browser CLI call: `POST /api/viewport`, `POST /api/nav/{back,forward,reload}`, `POST /api/nav/open {url}`, `GET /api/tabs`, `POST /api/tabs/{new,switch,close}`, `GET /api/errors`, `POST /api/input-log`.
-- `public/app.js`: connects to agent-browser's stream (`ws://127.0.0.1:9223/`, ack pacing, 15 fps cap), draws frames on a full-window canvas, injects mouse/keyboard input, and renders the overlays: tabs drawer (left, from the stream's `tabs` messages), address bar (right), console panel, full-screen toggle, controls-reference panel (the ? button), controller pointer.
-- `public/app.css`: dark glass panels, cyan hairlines, Carbon icons via `<use href="icons.svg#name">`. Icon names are the Carbon 32px file names (`arrow--left`, `trash-can`, ...).
+- `public/app.js`: connects to agent-browser's stream (`ws://127.0.0.1:9223/`, ack pacing, 15 fps cap), draws frames on a full-window canvas, injects mouse/keyboard input, and renders the overlays: the **drawer** (left: tabs from the stream's `tabs` messages, plus the footer tools: settings, keyboard, console, controls, full screen; ids keep the old `tabsBtn`/`tabList` names), address bar (right), console panel, full-screen toggle, controls-reference panel (the ? button), **Settings** modal (the gear: themes), controller pointer.
+- **Top-centre cluster:** left of centre, the heat-guard thermometer (48px), the temperatures pill (°F: battery, body = `xo-therm`, CPU = max `cpu-*`/`cpuss-*`, GPU = max `gpuss-*`, from `GET /api/temp`, polled only while the stats bar shows) and the Stream|Live pill; right of centre, the stats bar (fps · resolution · Mb/s; in Live, the live page's fps from its `[lab]` readout or a self-stopping rAF sampler via `/api/live/eval`). Under 640px the group centres in the free space and the stats bar drops to a second line.
+- **Themes** are token swaps on `<html data-theme>`: Standard (frosted glass, default) and Solid (same muted palette, opaque, no backdrop-filter). Persisted in localStorage `thorTheme`; `?theme=solid|standard` overrides for testing. Same names and mechanism in thor-canvas-lab.
+- `public/app.css`: neutral glassmorphism (token names shared with thor-canvas-lab; the viewer's tint is faintly cool). Closed panes are `display:none` (an invisible backdrop-filter still costs GPU). Address and refresh form one joined pill top-right; `.top-pill` is the slot for the Stream/Live toggle at top centre. Carbon icons via `<use href="icons.svg#name">`. Icon names are the Carbon 32px file names (`arrow--left`, `trash-can`, ...).
 - `manifest.webmanifest` + `sw.js` + PNG icons (rendered from `icon.svg` with headless Chromium) make it installable from Chrome's "Add to Home screen".
+
+## Theme contract (for any app shown in the viewer)
+
+Settings -> Themes (drawer gear) is the ONE control for the viewer shell and the hosted page. Standard = frosted
+glass; Solid = a neutral ~63% gray (`#a0a0a0`), dark ink (7.2:1), opaque, no `backdrop-filter`.
+- Stored server-side (`GET/POST /api/theme`, file `~/.cache/thor-viewer-theme`); localStorage is only a
+  first-paint cache; `?theme=` on the viewer URL overrides locally.
+- Applied to the hosted page as `<html data-theme>` + a `thor:theme` window event (detail `{ theme }`): on
+  change, after every Stream navigation (`POST /api/theme/apply`, headless page via agent-browser with the
+  gate off) and on every new live-frame context in Live (`live-bridge` `onLiveContext`, over CDP).
+- An app honours the attribute, `?theme=` on first load and the event; pages without the contract are
+  unaffected. Canvas Lab implements it.
 
 ## History and toggles
 
@@ -49,6 +73,6 @@ Render path: CDP screencast (JPEG) -> agent-browser WS -> viewer. Client-side tu
 - Decode with `createImageBitmap(Blob)` (off-main-thread), not `new Image()` + data URL; previous bitmap `.close()`d each frame.
 - Canvas backing store = frame's native pixels (e.g. 832x468), CSS-scaled to fill; NOT `innerWidth*devicePixelRatio` (was ~3x the pixels on a hi-DPI screen for no quality gain). 2d context created with `{alpha:false, desynchronized:true}`.
 - Measured ~53 fps rendered on-device (tools/measure-fps.mjs animates a page and counts acks), up from the old 15 cap.
-- Persistent stats bar: a thin translucent top-center bar shows live viewer FPS · resolution · bandwidth · device temperature (localStorage `thorStats`, default on; "Hide stats bar" in the controls panel). Temperature comes from the server route `GET /api/temp` (reads `/sys` — battery temp in the bar, SoC also returned; the page can't read /sys itself); the value is coloured amber ≥40°C, red ≥44°C. Replaced the old hidden "Show FPS" toggle.
+- Persistent stats bar (localStorage `thorStats`, default on; "Hide stats bar" in the controls panel): right of centre, the viewer's own FPS · resolution · bandwidth of the stream (in Live, the live page's fps instead). Left of centre, beside the heat-guard thermometer, a temperatures pill in °F: battery, body (`xo-therm`), CPU and GPU, from `GET /api/temp` (the page can't read /sys; the API is in °C). See "Top-centre cluster" above.
 
 GPU is real now (updated): the remote Chromium runs `--use-angle=vulkan` (NOT `--disable-gpu`) and renders WebGL2 AND WebGPU on the actual Adreno 740 GPU via Mesa Turnip + the companion `turnip-kgsl-shim` (see that repo). Canvas Lab pieces run at 60fps through the viewer. Do NOT re-add `--disable-gpu` or the Vulkan compositing feature (the latter crash-loops/overheats the device). Daemon-wide stream quality is `AGENT_BROWSER_STREAM_QUALITY` (default 80) if gradients need it.

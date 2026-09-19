@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Live fixture</title>
+<h1>Live fixture</h1>
+<button id="inc">Add one</button> <span id="count">0</span>
+<button id="boom">Throw</button>
+<a id="next" href="page2.html">Page two</a>
+<script>
+  let n = 0;
+  document.getElementById('inc').onclick = () => { n++; document.getElementById('count').textContent = n; console.log('count ' + n); };
+  document.getElementById('boom').onclick = () => { setTimeout(() => { throw new Error('fixture boom'); }); };
+  console.log('fixture loaded');
+</script>

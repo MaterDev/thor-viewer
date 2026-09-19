@@ -1,12 +1,13 @@
 {
   "name": "thor-viewer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Full-screen live view of Claude's browser on the AYN Thor",
   "main": "server.mjs",
   "scripts": {
     "start": "node server.mjs",
     "test": "node --import /home/key/.local/share/playwright-mcp/platform-linux.mjs test/smoke.mjs",
-    "build:icons": "node tools/build-icons.mjs"
+    "build:icons": "node tools/build-icons.mjs",
+    "test:live": "node --test test/modes.test.mjs test/heat.test.mjs && bash test/gate.test.sh && node test/live.mjs"
   },
   "repository": {
     "type": "git",

@@ -1,6 +1,29 @@
 // Thor Viewer: full-screen live view of the agent-browser "thor" session.
 // Connects straight to agent-browser's stream (JPEG frames + input injection);
 // tabs, navigation and page errors go through the small server API.
+// ---------- theme (applied first): Standard = frosted glass (default); Solid = same palette, opaque, no blur.
+// A theme is a token swap: <html data-theme="solid"> overrides the glass tokens in app.css. ?theme= overrides
+// for testing (not persisted); the Settings choice persists in localStorage.
+const THEMES = ['standard', 'solid'];
+function currentTheme() { return document.documentElement.dataset.theme || 'standard'; }
+// ONE choice drives the viewer shell and the hosted page (Theme contract, CLAUDE.md): it's stored on the
+// server, which applies it to the hosted page (Live: CDP into the frame; Stream: the headless page).
+// localStorage is only a first-paint cache; ?theme= overrides this viewer locally (not saved).
+function setTheme(t, persist) {
+  if (!THEMES.includes(t)) return;
+  if (t === 'standard') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('thorTheme', t); } catch {}
+  if (persist) fetch('/api/theme', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ theme: t }) }).catch(() => {});
+}
+const themeParam = (() => { try { return new URLSearchParams(location.search).get('theme'); } catch { return null; } })();
+{ let t = themeParam; try { t = t || localStorage.getItem('thorTheme'); } catch {} if (t) setTheme(t, false); }
+if (!themeParam) fetch('/api/theme').then(r => r.json()).then(r => { if (r.theme !== currentTheme()) setTheme(r.theme, false); }).catch(() => {});
+let themeApplyTimer = 0;
+function applyThemeToPage() {                        // after a Stream navigation (Live re-applies server-side);
+  clearTimeout(themeApplyTimer);                      // the server holds the choice and skips Standard (nothing to undo on a fresh page)
+  themeApplyTimer = setTimeout(() => fetch('/api/theme/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 400);
+}
+
 const STREAM = 'ws://127.0.0.1:9223/?pacing=ack&maxFps=60';
 const $ = id => document.getElementById(id);
 const canvas = $('screen'), ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
@@ -11,6 +34,19 @@ let ws, frame = null, fw = 1280, fh = 720, errors = 0;
 let view = { scale: 1, x: 0, y: 0 };                       // where the frame is drawn (CSS px)
 const cursor = { x: 640, y: 360, visible: false, timer: null }; // controller pointer, frame coords
 const api = (path, body) => fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' }).catch(() => {});
+
+// ---------- mode: Stream (JPEG copy of the agent's browser) or Live (the real page, in a frame) ----------
+// Only one mode's machinery runs at a time. live.js is loaded on first use of Live mode.
+let mode = 'stream', live = null;
+try { if (localStorage.getItem('thorMode') === 'live') mode = 'live'; } catch {}
+const isLive = () => mode === 'live' && live;
+const nav = {                                           // every page action goes through here
+  open: url => isLive() ? live.open(url) : api('/api/nav/open', { url }),
+  go: op => isLive() ? live.nav(op) : api('/api/nav/' + op),
+  tabNew: () => isLive() ? live.tabNew() : api('/api/tabs/new', {}),
+  tabSwitch: id => isLive() ? live.tabSwitch(id) : api('/api/tabs/switch', { id }),
+  tabClose: id => isLive() ? live.tabClose(id) : api('/api/tabs/close', { id }),
+};
 
 // ---------- visited-page history (built from stream url events; per device) ----------
 let errSeen = 0;            // entries of the (append-only) error buffer we've already handled
@@ -54,7 +90,7 @@ function renderHistory() {
     const t = document.createElement('span'); t.className = 'ht'; t.textContent = host;
     const u = document.createElement('span'); u.className = 'hu'; u.textContent = it.url;
     li.append(t, u);
-    li.onclick = () => { closeUrlBar(); api('/api/nav/open', { url: it.url }); };
+    li.onclick = () => { closeUrlBar(); nav.open(it.url); };
     list.appendChild(li);
   }
 }
@@ -75,8 +111,8 @@ function draw() {
   else { ctx.fillStyle = '#05080c'; ctx.fillRect(0, 0, fw, fh); }
   if (cursor.visible) {
     const r = 10 / view.scale, lw = 2 / view.scale;
-    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r, 0, Math.PI * 2); ctx.strokeStyle = '#5ee0ff'; ctx.lineWidth = lw; ctx.stroke();
-    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r / 5, 0, Math.PI * 2); ctx.fillStyle = '#5ee0ff'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r, 0, Math.PI * 2); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = lw; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cursor.x, cursor.y, r / 5, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
   }
 }
 let lastW = innerWidth;
@@ -85,7 +121,7 @@ addEventListener('resize', () => { layout(); if (innerWidth !== lastW) { lastW =
 // ---------- viewport sync: the remote browser takes this screen's exact size ----------
 let sentSize = '', sizeTimer, lastResync = 0;
 const TEST_BROWSER = /HeadlessChrome/.test(navigator.userAgent);            // Claude's own test copies never set the size
-const inFront = () => !TEST_BROWSER && document.visibilityState === 'visible' && document.hasFocus(); // only the viewer in front sets the size
+const inFront = () => mode === 'stream' && !TEST_BROWSER && document.visibilityState === 'visible' && document.hasFocus(); // only the viewer in front sets the size
 function syncViewport() {
   clearTimeout(sizeTimer);
   sizeTimer = setTimeout(() => {
@@ -103,11 +139,24 @@ document.addEventListener('visibilitychange', () => { sentSize = ''; syncViewpor
 addEventListener('focus', () => { sentSize = ''; syncViewport(); });
 
 // ---------- stream ----------
+let streamOn = false, errTimer = null;
+function streamStart() {
+  if (streamOn) return; streamOn = true;
+  canvas.classList.remove('hidden'); connect();
+  errTimer = setInterval(pollErrors, 20000);
+}
+function streamStop() {                                  // Live mode: no socket, no drawing, no polling
+  streamOn = false; clearInterval(errTimer); errTimer = null;
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  if (frame && frame.close) frame.close(); frame = null;
+  canvas.classList.add('hidden'); status.classList.add('hidden');
+}
 function connect() {
+  if (!streamOn) return;
   status.textContent = 'connecting to browser'; status.classList.remove('hidden');
   ws = new WebSocket(STREAM);
   ws.onopen = () => { status.textContent = 'waiting for first frame'; };
-  ws.onclose = () => { status.textContent = 'browser stream closed · ask Claude to run the start script · retrying'; status.classList.remove('hidden'); setTimeout(connect, 2000); };
+  ws.onclose = () => { if (!streamOn) return; status.textContent = 'browser stream closed · ask Claude to run the start script · retrying'; status.classList.remove('hidden'); setTimeout(connect, 2000); };
   ws.onerror = () => ws.close();
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
@@ -124,7 +173,7 @@ function connect() {
       }).catch(() => send({ type: 'ack', seq: m.seq }));
     } else if (m.type === 'url') {
       if (document.activeElement !== urlEl) urlEl.value = m.url;
-      clearConsoleOnNav(m.url); addHistory(m.url);
+      clearConsoleOnNav(m.url); addHistory(m.url); applyThemeToPage();
     } else if (m.type === 'tabs' && Array.isArray(m.tabs)) {
       setTabs(m.tabs.map(t => ({ id: t.tabId, title: t.title, url: t.url, active: !!t.active })));
       const active = m.tabs.find(t => t.active) || m.tabs[0];
@@ -145,8 +194,10 @@ const toggleUrlBar = () => urlwrap.classList.contains('open') ? closeUrlBar() : 
 $('urlBtn').onclick = openUrlBar;
 $('urlClose').onclick = closeUrlBar;
 urlEl.addEventListener('input', () => { urlEdited = true; renderHistory(); });
-$('back').onclick = () => api('/api/nav/back');
-$('forward').onclick = () => api('/api/nav/forward');
+$('back').onclick = () => nav.go('back');
+$('urlReload').onclick = () => nav.go('reload');
+$('refreshBtn').onclick = () => nav.go('reload');
+$('forward').onclick = () => nav.go('forward');
 $('urlbar').onsubmit = e => {
   e.preventDefault();
   const v = urlEl.value.trim(); if (!v) return;
@@ -154,10 +205,10 @@ $('urlbar').onsubmit = e => {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) url = v;                        // full URL
   else if (/^[^\s]+\.[^\s]+$/.test(v)) url = 'https://' + v;             // bare domain or path
   else url = 'https://duckduckgo.com/?q=' + encodeURIComponent(v);       // search terms
-  closeUrlBar(); api('/api/nav/open', { url });
+  closeUrlBar(); nav.open(url);
 };
 
-// ---------- tabs drawer (top left) ----------
+// ---------- the drawer (top left): tabs plus the footer tools; ids keep the old 'tabs' names ----------
 // The stream sends the full tab list many times a second; keep a copy and redraw only when it changes.
 let tabs = [], tabsKey = '';
 function setTabs(list) {
@@ -168,13 +219,13 @@ function setTabs(list) {
 }
 const openDrawer = async () => {
   drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs();
-  if (!tabs.length) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
+  if (!tabs.length && !isLive()) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
 };
 const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
 const toggleDrawer = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 $('tabsBtn').onclick = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 scrim.onclick = closeDrawer;
-$('tabNew').onclick = () => api('/api/tabs/new', {});
+$('tabNew').onclick = () => { nav.tabNew(); if (isLive()) { closeDrawer(); openUrlBar(); } };
 function renderTabs() {
   const list = $('tabList'); list.textContent = '';
   if (!tabs.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'no tabs'; list.appendChild(li); return; }
@@ -184,7 +235,7 @@ function renderTabs() {
     const title = document.createElement('span'); title.className = 'title'; title.textContent = t.title || t.url || t.id;
     const u = document.createElement('span'); u.className = 'u'; u.textContent = t.url || '';
     body.append(title, u);
-    body.onclick = async () => { await api('/api/tabs/switch', { id: t.id }); closeDrawer(); };
+    body.onclick = async () => { await nav.tabSwitch(t.id); closeDrawer(); };
     // Closing takes two taps: the × turns into "close?" with a confirm (trash) and a cancel, and reverts after 4s.
     const x = document.createElement('button'); x.className = 'ib'; x.title = 'Close tab';
     x.innerHTML = '<svg><use href="icons.svg#close"/></svg>';
@@ -193,14 +244,28 @@ function renderTabs() {
     let revert;
     const arm = on => { x.classList.toggle('hidden', on); ask.classList.toggle('hidden', !on); li.classList.toggle('arming', on); clearTimeout(revert); if (on) revert = setTimeout(() => arm(false), 4000); };
     x.onclick = e => { e.stopPropagation(); arm(true); };
-    ask.querySelector('.yes').onclick = e => { e.stopPropagation(); arm(false); api('/api/tabs/close', { id: t.id }); };
+    ask.querySelector('.yes').onclick = e => { e.stopPropagation(); arm(false); nav.tabClose(t.id); };
     ask.querySelector('.no').onclick = e => { e.stopPropagation(); arm(false); };
     li.append(body, x, ask); list.appendChild(li);
   }
 }
 
 // ---------- tools (drawer footer) ----------
-$('reload').onclick = () => { api('/api/nav/reload'); closeDrawer(); };
+// ---------- settings (drawer footer gear): themes; the body is built on first open ----------
+$('settingsBtn').onclick = () => { buildSettings(); $('settings').classList.remove('hidden'); closeDrawer(); };
+$('settingsClose').onclick = () => $('settings').classList.add('hidden');
+function buildSettings() {
+  const body = $('settingsBody');
+  if (body.childElementCount) { markTheme(); return; }
+  body.innerHTML = '<h3>Theme</h3><div class="crow" role="radiogroup" aria-label="Theme"></div><p class="note">Standard is frosted glass. Solid uses the same muted colours with opaque surfaces and no blur (lighter on the GPU).</p>';
+  for (const [id, label] of [['standard', 'Standard'], ['solid', 'Solid']]) {
+    const b = document.createElement('button'); b.className = 'btn'; b.dataset.theme = id; b.textContent = label; b.setAttribute('role', 'radio');
+    b.onclick = () => { setTheme(id, true); markTheme(); };
+    body.querySelector('.crow').append(b);
+  }
+  markTheme();
+}
+function markTheme() { for (const b of $('settingsBody').querySelectorAll('[data-theme]')) { const on = b.dataset.theme === currentTheme(); b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); } }
 $('kbd').onclick = () => { closeDrawer(); key.focus(); };
 const toggleFullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
 $('fs').onclick = () => { toggleFullscreen(); closeDrawer(); };
@@ -231,7 +296,7 @@ function addLog(level, text) {
 // Uncaught page errors are not on the stream; poll the server. The buffer is append-only
 // (can't be cleared via the CLI in this version), so show only entries past what we've seen.
 async function pollErrors() {
-  if (!errBaseInit) return;                             // don't surface anything until the baseline is set
+  if (!errBaseInit || mode !== 'stream') return;                             // don't surface anything until the baseline is set
   try {
     const list = await (await fetch('/api/errors')).json();
     if (list.length < errSeen) errSeen = 0;            // session restarted -> buffer shrank
@@ -243,8 +308,7 @@ async function initErrorBaseline() {                    // skip errors already i
   try { errSeen = (await (await fetch('/api/errors')).json()).length; } catch { errSeen = 0; }
   errBaseInit = true;
 }
-setInterval(pollErrors, 20000);
-$('con').onclick = () => { consoleEl.classList.toggle('hidden'); errors = 0; badge.classList.add('hidden'); closeDrawer(); if (!consoleEl.classList.contains('hidden')) pollErrors(); };
+$('con').onclick = () => { consoleEl.classList.toggle('hidden'); errors = 0; badge.classList.add('hidden'); closeDrawer(); if (!consoleEl.classList.contains('hidden') && mode === 'stream') pollErrors(); };
 $('clear').onclick = () => { logEl.textContent = ''; consoleEl.classList.add('hidden'); };
 
 // ---------- controls reference ----------
@@ -288,7 +352,7 @@ key.addEventListener('beforeinput', e => {
 
 // ---------- device controller (Gamepad API) and hardware keys ----------
 // First-guess layout: left stick / D-pad scroll, right stick moves the pointer, A taps, B goes back,
-// LB/RB page up/down, Start opens the address bar, Select opens the tabs drawer.
+// LB/RB page up/down, Start opens the address bar, Select opens the drawer.
 // Everything received is logged to the server so the real mapping can be read off the log.
 const logInput = (() => { let last = 0; return data => { const now = Date.now(); if (now - last < 150) return; last = now; api('/api/input-log', data); }; })();
 function showCursor() { cursor.visible = true; clearTimeout(cursor.timer); cursor.timer = setTimeout(() => { cursor.visible = false; draw(); }, 2500); }
@@ -310,6 +374,11 @@ function pollPads() {
   if (!rest) { stillFor = prevAx && ax.every((v, i) => v === prevAx[i]) && !b.some(Boolean) ? stillFor + 1 : 0; prevAx = ax; if (stillFor >= 30) rest = ax.slice(); }
   const edge = i => b[i] && !prevButtons[i];
   const lx = rel(ax[0] || 0, 0), ly = rel(ax[1] || 0, 1), rx = rel(ax[2] || 0, 2), ry = rel(ax[3] || 0, 3);
+  if (mode === 'live') {
+    if (edge(BIND.back)) nav.go('back');
+    if (edge(BIND.address)) toggleUrlBar(); if (edge(BIND.tabs)) toggleDrawer();
+    prevButtons = b; return;
+  }
   if (lx || ly) scrollBy(lx * 24, ly * 24);
   if (rx || ry) moveCursor(rx * 14, ry * 14);
   if (b[DPAD.up]) scrollBy(0, -40); if (b[DPAD.down]) scrollBy(0, 40); if (b[DPAD.left]) scrollBy(-40, 0); if (b[DPAD.right]) scrollBy(40, 0);
@@ -327,7 +396,7 @@ addEventListener('gamepadconnected', e => { logInput({ type: 'gamepadconnected',
 addEventListener('gamepaddisconnected', () => { clearInterval(padTimer); padTimer = null; });
 if ([...(navigator.getGamepads?.() || [])].some(p => p)) startPads();
 addEventListener('keydown', e => {                          // D-pad and buttons may arrive as key events on Android
-  if (document.activeElement === key || document.activeElement === urlEl) return;
+  if (document.activeElement === key || document.activeElement === urlEl || mode === 'live') return;
   logInput({ type: 'key', key: e.key, code: e.code, keyCode: e.keyCode });
   const step = 60, map = {
     ArrowUp: () => scrollBy(0, -step), ArrowDown: () => scrollBy(0, step), ArrowLeft: () => scrollBy(-step, 0), ArrowRight: () => scrollBy(step, 0),
@@ -384,37 +453,136 @@ $('calibCancel').onclick = () => endCalibration(false);
 // Shell stats bar: the FPS/resolution/bandwidth of what we're actually seeing THROUGH the viewer
 // (the CDP screencast stream), independent of whatever the page inside is doing. Subtle, persistent.
 let statCount = 0, statLast = performance.now(), statBytes = 0, showStats = true;
+let lastTemp = {};
+const SENSORS = [                                        // [key, label, icon, warm C, hot C]
+  ['battery', 'Battery', 'battery--full', 40, 44],
+  ['body', 'Body', 'mobile', 40, 45],
+  ['cpu', 'CPU', 'chip', 70, 80],                        // 70 C = the measurement gate, 80 C = the heat guard
+  ['gpu', 'GPU', 'dashboard', 70, 80],
+];
+const toF = c => c * 9 / 5 + 32;   // declared before applyStats() first runs
 try { showStats = localStorage.getItem('thorStats') !== '0'; } catch {}
-function statTick(nbytes) {
+function statTick(nbytes, flush = false) {
   if (!showStats) return;
-  statCount++; statBytes += (nbytes || 0);
+  if (!flush) { statCount++; statBytes += (nbytes || 0); }
   const now = performance.now(), dt = now - statLast;
-  if (dt >= 500) {
+  if (dt >= 500 && (!flush || dt >= 1000)) {
     const fps = Math.round(statCount * 1000 / dt);
     const mbps = (statBytes * 8 / 1e6) / (dt / 1000);
     const el = $('stats');
-    if (el) el.innerHTML = `<span class="v">${fps}</span> fps<span class="sep"> · </span>${fw}×${fh}<span class="sep"> · </span><span class="v">${mbps.toFixed(1)}</span> Mb/s${tempHtml()}`;
+    if (el) el.innerHTML = `<span class="v">${fps}</span> fps<span class="sep"> · </span><span class="res">${fw}×${fh}</span><span class="sep res"> · </span><span class="v">${mbps.toFixed(1)}</span> Mb/s`;
     statCount = 0; statBytes = 0; statLast = now;
   }
 }
-function applyStats() { const el = $('stats'); if (el) el.classList.toggle('hidden', !showStats); const b = $('statsToggle'); if (b) { b.textContent = showStats ? 'Hide stats bar' : 'Show stats bar'; b.classList.toggle('on', showStats); } }
+function applyStats() { const el = $('stats'); if (el) el.classList.toggle('hidden', !showStats); renderTemps(); const b = $('statsToggle'); if (b) { b.textContent = showStats ? 'Hide stats bar' : 'Show stats bar'; b.classList.toggle('on', showStats); } }
 $('statsToggle').onclick = () => { showStats = !showStats; try { localStorage.setItem('thorStats', showStats ? '1' : '0'); } catch {} applyStats(); };
 applyStats();
-// Device temperature (battery) via the server's /api/temp (the page can't read /sys). Colour it as it
-// climbs so thermal stress during heavy GPU work is visible at a glance. soc is fetched too (unused in
-// the bar for now — battery is "the device temperature").
-let lastTemp = { battery: null, soc: null };
-function tempHtml() {
-  const t = lastTemp.battery;
-  if (t == null) return '';
-  const colour = t >= 44 ? '#ff6b81' : t >= 40 ? '#f2a541' : 'var(--accent)';
-  return `<span class="sep"> · </span><span class="v" style="color:${colour}">${t.toFixed(1)}°C</span>`;
+// Temperatures via the server's /api/temp (the page can't read /sys), shown in °F beside the heat-guard
+// thermometer: battery (what the hand feels; battery health), body (xo-therm, the board: closest to skin),
+// CPU and GPU (max over their zones). Coloured as they climb. Polled only while the stats bar is shown.
+function renderTemps() {
+  const el = $('temps'); if (!el) return;
+  el.classList.toggle('hidden', !showStats);
+  el.innerHTML = SENSORS.filter(([k]) => lastTemp[k] != null).map(([k, label, icon, warm, hot]) => {
+    const c = lastTemp[k], f = toF(c), cls = c >= hot ? 'hot' : c >= warm ? 'warm' : '';
+    return `<span class="t ${cls}" data-k="${k}" title="${label} ${f.toFixed(1)} °F" aria-label="${label} ${Math.round(f)} degrees Fahrenheit"><svg aria-hidden="true"><use href="icons.svg#${icon}"/></svg>${Math.round(f)}°</span>`;
+  }).join('');
+}
+// In Live the stats bar shows the live page's frame rate (not the stream's): the page's own [lab] frame readout
+// when it has one, else a tiny rAF sampler that stops itself unless it's asked again within 5 s.
+const LIVE_FPS_JS = `(() => { try { if (window.__lab) { const f = __lab.frames(2).frame; if (f) return Math.round(1000 / f.mean); } } catch {}
+  const w = window, now = performance.now(); let s = w.__thorFps;
+  if (!s || !s.on) { s = w.__thorFps = { n: 0, t: now, on: true, until: 0 }; const tick = () => { s.n++; if (performance.now() < s.until) requestAnimationFrame(tick); else s.on = false; }; requestAnimationFrame(tick); }
+  s.until = now + 5000; const fps = s.n * 1000 / Math.max(1, now - s.t); s.n = 0; s.t = now; return Math.round(fps); })()`;
+async function pollLiveFps() {
+  if (!showStats || mode !== 'live') return;
+  let fps = null;
+  try { const r = await (await fetch('/api/live/eval', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expression: LIVE_FPS_JS }) })).json(); if (r.ok && Number.isFinite(r.value)) fps = r.value; } catch {}
+  const el = $('stats'); if (el && mode === 'live') el.innerHTML = fps == null ? '<span class="v">–</span> fps' : `<span class="v">${fps}</span> fps`;
 }
 async function pollTemp() {
-  if (!showStats) return;
+  if (!showStats) return renderTemps();
   try { const r = await fetch('/api/temp', { cache: 'no-store' }); if (r.ok) lastTemp = await r.json(); } catch {}
+  renderTemps();
 }
-pollTemp(); setInterval(pollTemp, 5000);
+pollTemp(); setInterval(pollTemp, 5000); setInterval(pollLiveFps, 2000);
+// an idle stream sends no frames: flush the stats once a second so the bar shows 0 fps instead of sticking at '–'
+setInterval(() => { if (showStats && mode !== 'live') statTick(0, true); }, 1000);
+
+// ---------- mode toggle (top, beside the tabs button) ----------
+const shell = {                                          // what live.js may use
+  setTabs, addLog, addHistory, openUrlBar, closeDrawer, pollTemp,
+  setUrl: u => { if (document.activeElement !== urlEl) urlEl.value = u; },
+  clearLog: () => { logEl.textContent = ''; errors = 0; badge.classList.add('hidden'); },
+  status: msg => { status.textContent = msg; status.classList.toggle('hidden', !msg); },
+  streamUrl: () => urlEl.value,
+};
+function showMode() {
+  const b = $('modeBtn'); b.dataset.mode = mode;
+  b.title = mode === 'live' ? 'Live page: tap for the stream' : 'Stream: tap for the live page';
+}
+async function setMode(m, persist = true) {
+  if (m === mode && (m === 'stream' ? streamOn : live)) return;
+  const was = mode; mode = m; showMode();
+  if (persist) try { localStorage.setItem('thorMode', m); } catch {}
+  tabs = []; tabsKey = ''; shell.clearLog(); closeDrawer();
+  if (m === 'live') {
+    streamStop();
+    try { live = live || await import('./live.js').then(mod => mod.create(shell)); live.enter(); }
+    catch (e) { live = null; mode = was; showMode(); shell.status('live mode failed to load'); if (was === 'stream') streamStart(); }
+  } else {
+    if (live) live.exit();
+    streamStart(); sentSize = ''; syncViewport(); pollTemp();
+  }
+}
+$('modeBtn').onclick = () => setMode(mode === 'live' ? 'stream' : 'live');
+// Small glass notice, top centre; built on first use, removed when it times out (nothing left rendering).
+let noticeEl = null, noticeTimer = null;
+function notice(msg, ms = 7000, action = null) {
+  clearTimeout(noticeTimer);
+  if (!noticeEl) { noticeEl = document.createElement('div'); noticeEl.id = 'notice'; noticeEl.setAttribute('role', 'status'); document.body.appendChild(noticeEl); }
+  noticeEl.textContent = msg;
+  const close = () => { clearTimeout(noticeTimer); noticeEl?.remove(); noticeEl = null; };
+  if (action) { const b = document.createElement('button'); b.textContent = action.label; b.onclick = () => { close(); action.run(); }; noticeEl.appendChild(b); }
+  noticeTimer = setTimeout(close, ms);
+}
+// Live could not start or lost its connection: back to Stream for now. Key's choice (thorMode) is kept,
+// so the next open tries Live again.
+shell.fallback = (reason, hot) => {
+  if (mode !== 'live') return;
+  setMode('stream', false);
+  if (hot) notice(reason || 'Too hot, switched to Stream.', 30000, { label: 'Back to Live', run: () => setMode('live') });  // no auto-return
+  else notice('Live is unavailable, showing Stream. ' + (reason || ''));
+};
+
+// ---------- heat guard switch (the thermometer beside the temperature readouts) ----------
+// Tap: guard off for 30 min / back on. The state lives on the server (/api/heat), so a reload keeps it.
+// Long-press: shows the time left. The badge ticks once a minute, and only while the guard is off.
+let heatOffUntil = null, heatTick = null;
+function showHeat() {
+  const b = $('heatBtn'), left = $('heatLeft');
+  clearInterval(heatTick); heatTick = null;
+  const off = heatOffUntil && heatOffUntil > Date.now();
+  if (!off) { heatOffUntil = null; delete b.dataset.off; left.classList.add('hidden'); b.title = 'Heat guard on: Live switches to Stream if the device runs too hot. Tap to turn off for 30 min.'; return; }
+  const mins = Math.ceil((heatOffUntil - Date.now()) / 60000);
+  b.dataset.off = ''; left.textContent = mins + 'm'; left.classList.remove('hidden');
+  b.title = `Heat guard off for ${mins} more min. Tap to turn it back on.`;
+  heatTick = setInterval(showHeat, 60000);
+}
+async function heatSet(off) {
+  try { const r = await (await fetch('/api/heat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ off }) })).json(); heatOffUntil = r.offUntil; } catch {}
+  showHeat(); notice(heatOffUntil ? 'Heat guard off for 30 min.' : 'Heat guard on.', 3000);
+}
+{
+  const b = $('heatBtn'); let press = null, long = false;
+  b.addEventListener('pointerdown', () => { long = false; press = setTimeout(() => { long = true; notice(heatOffUntil ? `Heat guard off for ${Math.ceil((heatOffUntil - Date.now()) / 60000)} more min.` : 'Heat guard on.', 3000); }, 600); });
+  b.addEventListener('pointerup', () => clearTimeout(press));
+  b.addEventListener('pointercancel', () => clearTimeout(press));
+  b.onclick = () => { if (!long) heatSet(!heatOffUntil); };
+  fetch('/api/heat').then(r => r.json()).then(r => { heatOffUntil = r.offUntil; showHeat(); }).catch(() => {});
+}
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-layout(); syncViewport(); connect(); initErrorBaseline();
+layout(); showMode();
+if (mode === 'live') { mode = 'stream'; setMode('live'); } else { streamStart(); syncViewport(); }
+initErrorBaseline();

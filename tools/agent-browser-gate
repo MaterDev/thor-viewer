@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# agent-browser gate: the Thor's agent-browser wrapper, plus automatic routing by the Thor Viewer's mode.
+# Install by replacing ~/.local/bin/agent-browser with this file (it keeps everything the old wrapper did).
+#
+#   Stream mode (or the viewer is unreachable): commands go to the headless `thor` session, as always.
+#   Live mode:  commands go to Key's live page (the viewer app's own CDP target). Page commands are
+#               translated (open/back/forward/reload/eval/get url/get title/console/errors); commands that
+#               would break the viewer (close, tab, set, stream, ...) are refused with a clear message.
+#   --headless: in Live mode, borrow the headless page for this one command (the viewer freezes the live
+#               page, thaws the headless one, and reverses it after; a trap gives it back on any exit).
+# Only the default `thor` session is routed; any other --session passes straight through.
+# THOR_GATE=off bypasses routing entirely (the viewer server uses it for its own calls).
+set -u
+REAL="${THOR_GATE_REAL:-/home/key/.local/share/agent-browser/bin/agent-browser}"
+VIEWER="${THOR_VIEWER_URL:-http://127.0.0.1:4850}"
+export AGENT_BROWSER_SKILLS_DIR="${AGENT_BROWSER_SKILLS_DIR:-/home/key/.local/share/agent-browser/skill-data}"
+export AGENT_BROWSER_SESSION="${AGENT_BROWSER_SESSION:-thor}"
+export VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/data/data/com.termux/files/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json}"
+
+# Which session, and strip our own --headless flag.
+sess="$AGENT_BROWSER_SESSION"; prev=""; headless=0; args=()
+for a in "$@"; do
+  [ "$prev" = "--session" ] && sess="$a"
+  case "$a" in --session=*) sess="${a#--session=}";; esac
+  prev="$a"
+  [ "$a" = "--headless" ] && { headless=1; continue; }
+  args+=("$a")
+done
+# Port 9223 belongs to the "thor" session only (the Thor Viewer connects there).
+[ "$sess" = "thor" ] && export AGENT_BROWSER_STREAM_PORT="${AGENT_BROWSER_STREAM_PORT:-9223}"
+
+[ "${THOR_GATE:-on}" = "off" ] || [ "$sess" != "thor" ] && exec "$REAL" "${args[@]}"
+
+# Ask the viewer (fast, local). Any failure means Stream: never touch Key's live page by accident.
+mode=stream viewerTargetId="" cdp="" liveUrl="" liveTitle=""
+modeinfo() {
+  local out; out=$(curl -s -m "${THOR_GATE_TIMEOUT:-0.5}" "$VIEWER/api/mode?format=sh" 2>/dev/null) || out=""
+  mode=stream viewerTargetId="" cdp="" liveUrl="" liveTitle=""
+  while IFS='=' read -r k v; do
+    case "$k" in mode|viewerTargetId|cdp|liveUrl|liveTitle) printf -v "$k" '%s' "$v";; esac
+  done <<<"$out"
+  case "$mode" in live|borrowed) ;; *) mode=stream;; esac
+}
+modeinfo
+[ "$mode" = stream ] && exec "$REAL" "${args[@]}"
+
+post() { curl -s -m "${3:-10}" -X POST -H 'content-type: application/json' -d "$2" "$VIEWER$1"; }
+jstr() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/\\n}; printf '"%s"' "$s"; }
+say() { printf 'agent-browser (Live mode): %s\n' "$*" >&2; }
+
+# ---------- --headless: borrow, run, give back ----------
+if [ "$headless" = 1 ]; then
+  owner="gate-$$-$(date +%s%N)"; waited=0
+  while :; do
+    r=$(post /api/mode/borrow "{\"owner\":\"$owner\",\"ms\":${THOR_BORROW_MS:-60000}}")
+    case "$r" in
+      *'"ok":true'*) break ;;
+      *'already borrowed'*) [ "$waited" -ge "${THOR_BORROW_WAIT:-30}" ] && { say "another agent is still borrowing the headless page; gave up"; exit 75; }
+                            sleep 0.5; waited=$((waited + 1)) ;;
+      *'not in Live mode'*) exec "$REAL" "${args[@]}" ;;   # Key went back to Stream meanwhile
+      *) say "could not borrow the headless page: ${r:-viewer did not answer}"; exit 75 ;;
+    esac
+  done
+  giveback() { post /api/mode/return "{\"owner\":\"$owner\"}" >/dev/null; }
+  trap giveback EXIT; trap 'exit 130' INT TERM
+  "$REAL" "${args[@]}"; exit $?
+fi
+
+# ---------- Live: route to the live page ----------
+if [ "$mode" = borrowed ]; then                          # someone is briefly on the headless page; wait for it
+  for _ in $(seq 1 "${THOR_BORROW_WAIT:-30}"); do sleep 0.5; modeinfo; [ "$mode" != borrowed ] && break; done
+  [ "$mode" = stream ] && exec "$REAL" "${args[@]}"
+  [ "$mode" = borrowed ] && { say "the headless page is still borrowed; try again"; exit 75; }
+fi
+[ -n "$viewerTargetId" ] || { say "Live mode is on but the agent is not attached to the viewer page (see the viewer console). Add --headless to use your own browser."; exit 69; }
+
+# The command word: the first argument that is not an option (or an option's value).
+cmdi=-1; i=0; skip=0
+for a in "${args[@]}"; do
+  if [ "$skip" = 1 ]; then skip=0
+  else case "$a" in
+    --session|--profile|--cdp|--executable-path|--extension|--init-script|--enable|--allowed-domains|--args|--user-agent|--timeout) skip=1 ;;
+    -*) ;;
+    *) cmdi=$i; break ;;
+  esac; fi
+  i=$((i + 1))
+done
+cmd=""; [ "$cmdi" -ge 0 ] && cmd="${args[$cmdi]}"
+rest=("${args[@]:$((cmdi + 1))}")
+
+case "$cmd" in
+  open|goto|navigate)
+    url="${rest[0]:-}"; [[ "$url" =~ ^https?:// ]] || url="https://$url"
+    r=$(post /api/live/open "{\"url\":$(jstr "$url")}"); case "$r" in *'"ok":true'*) echo "✓ opened in the live page: $url"; exit 0;; *) say "open failed: $r"; exit 1;; esac ;;
+  back|forward|reload)
+    r=$(post /api/live/nav "{\"op\":\"$cmd\"}"); case "$r" in *'"ok":true'*) echo "✓ $cmd"; exit 0;; *) say "$cmd failed: $r"; exit 1;; esac ;;
+  eval)
+    r=$(post /api/live/eval "{\"expression\":$(jstr "${rest[*]}")}" 20)
+    case "$r" in *'"ok":true'*) printf '%s\n' "$r" | sed -E 's/^\{"ok":true,"value":(.*)\}$/\1/; s/^\{"ok":true\}$/undefined/'; exit 0;; *) say "eval failed: $r"; exit 1;; esac ;;
+  get)
+    case "${rest[0]:-}" in url) echo "$liveUrl"; exit 0;; title) echo "$liveTitle"; exit 0;; esac ;;
+  console|errors)
+    curl -s -m 5 "$VIEWER/api/live/logs"; echo; exit 0 ;;
+  close|quit|tab|tabs|set|stream|connect|dashboard|session|record|pdf|profiler|trace|inspect|cookies|storage|network|install|upgrade|doctor)
+    say "'$cmd' is not available on Key's live page. Add --headless to run it on your own browser, or ask Key to switch the viewer to Stream."; exit 64 ;;
+esac
+
+# Everything else (snapshot, click, fill, type, press, scroll, screenshot, find, wait, is, get text, ...)
+# runs over CDP on the viewer page, whose snapshot includes the live frame's elements (use @refs).
+port="${cdp##*:}"; port="${port%%/*}"
+unset AGENT_BROWSER_STREAM_PORT
+LIVE=(--session "${THOR_GATE_LIVE_SESSION:-thor-live}" --cdp "$port")   # tests use their own session name
+# Bind the thor-live session to the viewer page on every call: never act on whatever tab happens to be
+# active (on Android that could be one of Key's Chrome tabs).
+tabs=$("$REAL" "${LIVE[@]}" tab list --json 2>/dev/null | tr '{' '\n')
+line=$(grep "\"targetId\":\"$viewerTargetId\"" <<<"$tabs" | head -1)
+tab=$(sed -nE 's/.*"tabId":"(t[0-9]+)".*/\1/p' <<<"$line")
+[ -n "$tab" ] || { say "could not find the viewer page among the CDP tabs"; exit 69; }
+case "$line" in *'"active":true'*) ;; *) "$REAL" "${LIVE[@]}" tab "$tab" >/dev/null || { say "could not bind to the viewer page"; exit 69; } ;; esac
+out=()                                                  # drop a --session thor the caller may have given
+skipn=0; for a in "${args[@]}"; do
+  if [ "$skipn" = 1 ]; then skipn=0; continue; fi
+  case "$a" in --session) skipn=1; continue;; --session=*) continue;; esac
+  out+=("$a")
+done
+exec "$REAL" "${LIVE[@]}" "${out[@]}"
