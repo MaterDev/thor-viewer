@@ -442,6 +442,14 @@ $('calibCancel').onclick = () => endCalibration(false);
 // Shell stats bar: the FPS/resolution/bandwidth of what we're actually seeing THROUGH the viewer
 // (the CDP screencast stream), independent of whatever the page inside is doing. Subtle, persistent.
 let statCount = 0, statLast = performance.now(), statBytes = 0, showStats = true;
+let lastTemp = {};
+const SENSORS = [                                        // [key, label, icon, warm C, hot C]
+  ['battery', 'Battery', 'battery--full', 40, 44],
+  ['body', 'Body', 'mobile', 40, 45],
+  ['cpu', 'CPU', 'chip', 70, 80],                        // 70 C = the measurement gate, 80 C = the heat guard
+  ['gpu', 'GPU', 'dashboard', 70, 80],
+];
+const toF = c => c * 9 / 5 + 32;   // declared before applyStats() first runs
 try { showStats = localStorage.getItem('thorStats') !== '0'; } catch {}
 function statTick(nbytes) {
   if (!showStats) return;
@@ -451,29 +459,42 @@ function statTick(nbytes) {
     const fps = Math.round(statCount * 1000 / dt);
     const mbps = (statBytes * 8 / 1e6) / (dt / 1000);
     const el = $('stats');
-    if (el) el.innerHTML = `<span class="v">${fps}</span> fps<span class="sep"> · </span>${fw}×${fh}<span class="sep"> · </span><span class="v">${mbps.toFixed(1)}</span> Mb/s${tempHtml()}`;
+    if (el) el.innerHTML = `<span class="v">${fps}</span> fps<span class="sep"> · </span><span class="res">${fw}×${fh}</span><span class="sep res"> · </span><span class="v">${mbps.toFixed(1)}</span> Mb/s`;
     statCount = 0; statBytes = 0; statLast = now;
   }
 }
-function applyStats() { const el = $('stats'); if (el) el.classList.toggle('hidden', !showStats); const b = $('statsToggle'); if (b) { b.textContent = showStats ? 'Hide stats bar' : 'Show stats bar'; b.classList.toggle('on', showStats); } }
+function applyStats() { const el = $('stats'); if (el) el.classList.toggle('hidden', !showStats); renderTemps(); const b = $('statsToggle'); if (b) { b.textContent = showStats ? 'Hide stats bar' : 'Show stats bar'; b.classList.toggle('on', showStats); } }
 $('statsToggle').onclick = () => { showStats = !showStats; try { localStorage.setItem('thorStats', showStats ? '1' : '0'); } catch {} applyStats(); };
 applyStats();
-// Device temperature (battery) via the server's /api/temp (the page can't read /sys). Colour it as it
-// climbs so thermal stress during heavy GPU work is visible at a glance. soc is fetched too (unused in
-// the bar for now — battery is "the device temperature").
-let lastTemp = { battery: null, soc: null };
-function tempHtml() {
-  const t = lastTemp.battery;
-  if (t == null) return '';
-  const colour = t >= 44 ? '#ff6b81' : t >= 40 ? '#f2a541' : 'var(--accent)';
-  return `<span class="sep"> · </span><span class="v" style="color:${colour}">${t.toFixed(1)}°C</span>`;
+// Temperatures via the server's /api/temp (the page can't read /sys), shown in °F beside the heat-guard
+// thermometer: battery (what the hand feels; battery health), body (xo-therm, the board: closest to skin),
+// CPU and GPU (max over their zones). Coloured as they climb. Polled only while the stats bar is shown.
+function renderTemps() {
+  const el = $('temps'); if (!el) return;
+  el.classList.toggle('hidden', !showStats);
+  el.innerHTML = SENSORS.filter(([k]) => lastTemp[k] != null).map(([k, label, icon, warm, hot]) => {
+    const c = lastTemp[k], f = toF(c), cls = c >= hot ? 'hot' : c >= warm ? 'warm' : '';
+    return `<span class="t ${cls}" data-k="${k}" title="${label} ${f.toFixed(1)} °F" aria-label="${label} ${Math.round(f)} degrees Fahrenheit"><svg aria-hidden="true"><use href="icons.svg#${icon}"/></svg>${Math.round(f)}°</span>`;
+  }).join('');
+}
+// In Live the stats bar shows the live page's frame rate (not the stream's): the page's own [lab] frame readout
+// when it has one, else a tiny rAF sampler that stops itself unless it's asked again within 5 s.
+const LIVE_FPS_JS = `(() => { try { if (window.__lab) { const f = __lab.frames(2).frame; if (f) return Math.round(1000 / f.mean); } } catch {}
+  const w = window, now = performance.now(); let s = w.__thorFps;
+  if (!s || !s.on) { s = w.__thorFps = { n: 0, t: now, on: true, until: 0 }; const tick = () => { s.n++; if (performance.now() < s.until) requestAnimationFrame(tick); else s.on = false; }; requestAnimationFrame(tick); }
+  s.until = now + 5000; const fps = s.n * 1000 / Math.max(1, now - s.t); s.n = 0; s.t = now; return Math.round(fps); })()`;
+async function pollLiveFps() {
+  if (!showStats || mode !== 'live') return;
+  let fps = null;
+  try { const r = await (await fetch('/api/live/eval', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expression: LIVE_FPS_JS }) })).json(); if (r.ok && Number.isFinite(r.value)) fps = r.value; } catch {}
+  const el = $('stats'); if (el && mode === 'live') el.innerHTML = fps == null ? '<span class="v">–</span> fps' : `<span class="v">${fps}</span> fps`;
 }
 async function pollTemp() {
-  if (!showStats) return;
+  if (!showStats) return renderTemps();
   try { const r = await fetch('/api/temp', { cache: 'no-store' }); if (r.ok) lastTemp = await r.json(); } catch {}
-  if (mode === 'live') { const el = $('stats'); if (el) el.innerHTML = `<span class="v">live</span>${tempHtml()}`; }
+  renderTemps();
 }
-pollTemp(); setInterval(pollTemp, 5000);
+pollTemp(); setInterval(pollTemp, 5000); setInterval(pollLiveFps, 2000);
 
 // ---------- mode toggle (top, beside the tabs button) ----------
 const shell = {                                          // what live.js may use
@@ -521,7 +542,7 @@ shell.fallback = (reason, hot) => {
   else notice('Live is unavailable, showing Stream. ' + (reason || ''));
 };
 
-// ---------- heat guard switch (beside the mode pill) ----------
+// ---------- heat guard switch (the thermometer beside the temperature readouts) ----------
 // Tap: guard off for 30 min / back on. The state lives on the server (/api/heat), so a reload keeps it.
 // Long-press: shows the time left. The badge ticks once a minute, and only while the guard is off.
 let heatOffUntil = null, heatTick = null;
