@@ -124,6 +124,31 @@ async function tabList() {
   }
   return list;
 }
+// A tab Key closes must really close: the headless page behind it is what Stream shows, so a tab left open
+// there comes back the next time Stream rebuilds the list (Key, 2026-09-19: "no floating streams").
+async function closeHeadlessTab(url) {
+  if (!/^https?:\/\//.test(url || '')) return false;
+  const pins = await readPins();
+  if (pins.some(p => p.url === url)) return false;                 // a pinned tab is never closed by an agent or a sync
+  const list = (await tabList()) || [];
+  let ok = false;
+  for (const t of list) if (t.url === url) ok = (await runAgentBrowser(['tab', 'close', t.tabId])) || ok;
+  return ok;
+}
+// Make the headless tabs match the shared list exactly: close what Key closed, open what Live added, then
+// switch to the active one. Runs when the viewer leaves Live.
+async function syncHeadlessToShared() {
+  const s = await readShared(), want = s.tabs.filter(t => /^https?:\/\//.test(t.url));
+  if (!want.length) return true;
+  const pins = await readPins(), keep = new Set([...want.map(t => t.url), ...pins.map(p => p.url)]);
+  for (const t of (await tabList()) || []) if (/^https?:\/\//.test(t.url || '') && !keep.has(t.url)) await runAgentBrowser(['tab', 'close', t.tabId]);
+  const have = new Set(((await tabList()) || []).map(t => t.url));
+  for (const t of want) if (!have.has(t.url)) await runAgentBrowser(['tab', 'new', t.url]);
+  const act = want.find(t => t.id === s.active) || want[want.length - 1];
+  const m = ((await tabList()) || []).find(t => t.url === act.url);
+  return m ? await runAgentBrowser(['tab', m.tabId]) : true;
+}
+
 async function sharedFromHeadless(prev) {
   const list = await tabList();
   if (!Array.isArray(list)) return prev;                        // headless not answering: keep what we have
@@ -240,10 +265,8 @@ createServer(async (req, res) => {
     let body = ''; for await (const c of req) body += c;
     let ok = false;
     if (path === '/api/shared-tabs') { const s = cleanShared(JSON.parse(body || '{}')); if (s) { await writeShared(s); ok = true; } }
-    else if (path === '/api/shared-tabs/to-stream') {
-      const s = await readShared(), a = s.tabs.find(t => t.id === s.active);
-      ok = !a || !/^https?:\/\//.test(a.url) ? true : await runAgentBrowser(['open', a.url]);
-    }
+    else if (path === '/api/shared-tabs/to-stream') ok = await syncHeadlessToShared();
+    else if (path === '/api/shared-tabs/closed') { let p = {}; try { p = JSON.parse(body || '{}'); } catch {} ok = await closeHeadlessTab(p.url); }
     res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok }));
   }
   // ---------- pinned tabs ----------

@@ -58,7 +58,24 @@ try {
   const u4 = await until(async () => { const u = await ab([...SESS, 'get', 'url']); return u === P('/d?x=1') ? u : null; }, 15000);
   check('live -> stream: the headless page opens the live tab', u4 === P('/d?x=1'), u4 || await ab([...SESS, 'get', 'url']));
 
-  // 5. an agent open in Stream updates the shared list
+  // 5. a tab Key closes in Live is really gone: the headless page behind it closes too (no floating streams)
+  await until(async () => (await get('/api/mode')).mode === 'stream', 8000);
+  await ab([...SESS, 'tab', 'new', P('/gone')]);                       // a second headless tab
+  await pg.evaluate(async () => { await window.__live.enter(); });
+  await until(async () => (await get('/api/live/status')).clients > 0, 8000);
+  const before = await get('/api/shared-tabs?raw');
+  const doomed = before.tabs.find(t => t.url.endsWith('/gone'));
+  await pg.evaluate(id => window.__live.tabClose(id), doomed?.id);
+  const closed = await until(async () => (await ab([...SESS, 'tab', 'list'])).includes('/gone') ? null : true, 12000);
+  check('live: closing a tab closes the headless page behind it', !!doomed && closed === true, await ab([...SESS, 'tab', 'list']));
+
+  // 6. leaving Live syncs the headless tabs to the shared list (extras closed, missing opened)
+  await ab([...SESS, 'tab', 'new', P('/stray')]);                      // something Live never knew about
+  await pg.evaluate(() => window.__live.exit());
+  const synced = await until(async () => { const l = await ab([...SESS, 'tab', 'list']); return !l.includes('/stray') ? l : null; }, 15000);
+  check('live -> stream: tabs the viewer does not have are closed', !!synced, await ab([...SESS, 'tab', 'list']));
+
+  // 7. an agent open in Stream updates the shared list
   await until(async () => (await get('/api/mode')).mode === 'stream', 8000);
   await ab([...SESS, 'open', P('/c')]);
   const s5 = await get('/api/shared-tabs');

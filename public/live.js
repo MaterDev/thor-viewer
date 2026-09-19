@@ -111,6 +111,8 @@ export function create(shell) {
     tabNew() { const t = { id: 'L' + state.next++, url: '', title: 'new tab' }; state.tabs.push(t); state.active = t.id; save(); publishTabs(); show(''); },
     tabSwitch(id) { if (!state.tabs.some(t => t.id === id)) return; state.active = id; save(); publishTabs(); shell.clearLog(); show(activeTab().url); },
     tabClose(id) {
+      const gone = state.tabs.find(t => t.id === id);
+      if (gone?.url) post('/api/shared-tabs/closed', { url: gone.url });   // close the page behind it too: no floating streams
       state.tabs = state.tabs.filter(t => t.id !== id);
       if (state.active === id) state.active = state.tabs[state.tabs.length - 1]?.id || null;
       save(); publishTabs(); show(activeTab()?.url || '');
