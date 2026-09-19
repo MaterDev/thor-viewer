@@ -7,6 +7,7 @@ import { readFile, stat, appendFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as live from './live-bridge.mjs';   // Live Page Mode (CDP to the viewer's own page)
 
 const PORT = Number(process.env.PORT || 4850);
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
@@ -74,6 +75,7 @@ async function readTemp() {
 
 createServer(async (req, res) => {
   let path = new URL(req.url, 'http://x').pathname;
+  if (await live.handle(req, res, path, async () => { let b = ''; for await (const c of req) b += c; return b; })) return;
   if (path === '/api/temp') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
     return res.end(JSON.stringify(await readTemp()));

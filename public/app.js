@@ -12,6 +12,19 @@ let view = { scale: 1, x: 0, y: 0 };                       // where the frame is
 const cursor = { x: 640, y: 360, visible: false, timer: null }; // controller pointer, frame coords
 const api = (path, body) => fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' }).catch(() => {});
 
+// ---------- mode: Stream (JPEG copy of the agent's browser) or Live (the real page, in a frame) ----------
+// Only one mode's machinery runs at a time. live.js is loaded on first use of Live mode.
+let mode = 'stream', live = null;
+try { if (localStorage.getItem('thorMode') === 'live') mode = 'live'; } catch {}
+const isLive = () => mode === 'live' && live;
+const nav = {                                           // every page action goes through here
+  open: url => isLive() ? live.open(url) : api('/api/nav/open', { url }),
+  go: op => isLive() ? live.nav(op) : api('/api/nav/' + op),
+  tabNew: () => isLive() ? live.tabNew() : api('/api/tabs/new', {}),
+  tabSwitch: id => isLive() ? live.tabSwitch(id) : api('/api/tabs/switch', { id }),
+  tabClose: id => isLive() ? live.tabClose(id) : api('/api/tabs/close', { id }),
+};
+
 // ---------- visited-page history (built from stream url events; per device) ----------
 let errSeen = 0;            // entries of the (append-only) error buffer we've already handled
 let errBaseInit = false;   // becomes true once the pre-existing junk has been baselined out
@@ -54,7 +67,7 @@ function renderHistory() {
     const t = document.createElement('span'); t.className = 'ht'; t.textContent = host;
     const u = document.createElement('span'); u.className = 'hu'; u.textContent = it.url;
     li.append(t, u);
-    li.onclick = () => { closeUrlBar(); api('/api/nav/open', { url: it.url }); };
+    li.onclick = () => { closeUrlBar(); nav.open(it.url); };
     list.appendChild(li);
   }
 }
@@ -85,7 +98,7 @@ addEventListener('resize', () => { layout(); if (innerWidth !== lastW) { lastW =
 // ---------- viewport sync: the remote browser takes this screen's exact size ----------
 let sentSize = '', sizeTimer, lastResync = 0;
 const TEST_BROWSER = /HeadlessChrome/.test(navigator.userAgent);            // Claude's own test copies never set the size
-const inFront = () => !TEST_BROWSER && document.visibilityState === 'visible' && document.hasFocus(); // only the viewer in front sets the size
+const inFront = () => mode === 'stream' && !TEST_BROWSER && document.visibilityState === 'visible' && document.hasFocus(); // only the viewer in front sets the size
 function syncViewport() {
   clearTimeout(sizeTimer);
   sizeTimer = setTimeout(() => {
@@ -103,11 +116,24 @@ document.addEventListener('visibilitychange', () => { sentSize = ''; syncViewpor
 addEventListener('focus', () => { sentSize = ''; syncViewport(); });
 
 // ---------- stream ----------
+let streamOn = false, errTimer = null;
+function streamStart() {
+  if (streamOn) return; streamOn = true;
+  canvas.classList.remove('hidden'); connect();
+  errTimer = setInterval(pollErrors, 20000);
+}
+function streamStop() {                                  // Live mode: no socket, no drawing, no polling
+  streamOn = false; clearInterval(errTimer); errTimer = null;
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  if (frame && frame.close) frame.close(); frame = null;
+  canvas.classList.add('hidden'); status.classList.add('hidden');
+}
 function connect() {
+  if (!streamOn) return;
   status.textContent = 'connecting to browser'; status.classList.remove('hidden');
   ws = new WebSocket(STREAM);
   ws.onopen = () => { status.textContent = 'waiting for first frame'; };
-  ws.onclose = () => { status.textContent = 'browser stream closed · ask Claude to run the start script · retrying'; status.classList.remove('hidden'); setTimeout(connect, 2000); };
+  ws.onclose = () => { if (!streamOn) return; status.textContent = 'browser stream closed · ask Claude to run the start script · retrying'; status.classList.remove('hidden'); setTimeout(connect, 2000); };
   ws.onerror = () => ws.close();
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
@@ -145,10 +171,10 @@ const toggleUrlBar = () => urlwrap.classList.contains('open') ? closeUrlBar() : 
 $('urlBtn').onclick = openUrlBar;
 $('urlClose').onclick = closeUrlBar;
 urlEl.addEventListener('input', () => { urlEdited = true; renderHistory(); });
-$('back').onclick = () => api('/api/nav/back');
-$('urlReload').onclick = () => api('/api/nav/reload');
-$('refreshBtn').onclick = () => api('/api/nav/reload');
-$('forward').onclick = () => api('/api/nav/forward');
+$('back').onclick = () => nav.go('back');
+$('urlReload').onclick = () => nav.go('reload');
+$('refreshBtn').onclick = () => nav.go('reload');
+$('forward').onclick = () => nav.go('forward');
 $('urlbar').onsubmit = e => {
   e.preventDefault();
   const v = urlEl.value.trim(); if (!v) return;
@@ -156,7 +182,7 @@ $('urlbar').onsubmit = e => {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) url = v;                        // full URL
   else if (/^[^\s]+\.[^\s]+$/.test(v)) url = 'https://' + v;             // bare domain or path
   else url = 'https://duckduckgo.com/?q=' + encodeURIComponent(v);       // search terms
-  closeUrlBar(); api('/api/nav/open', { url });
+  closeUrlBar(); nav.open(url);
 };
 
 // ---------- tabs drawer (top left) ----------
@@ -170,13 +196,13 @@ function setTabs(list) {
 }
 const openDrawer = async () => {
   drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs();
-  if (!tabs.length) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
+  if (!tabs.length && !isLive()) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
 };
 const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
 const toggleDrawer = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 $('tabsBtn').onclick = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 scrim.onclick = closeDrawer;
-$('tabNew').onclick = () => api('/api/tabs/new', {});
+$('tabNew').onclick = () => { nav.tabNew(); if (isLive()) { closeDrawer(); openUrlBar(); } };
 function renderTabs() {
   const list = $('tabList'); list.textContent = '';
   if (!tabs.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'no tabs'; list.appendChild(li); return; }
@@ -186,7 +212,7 @@ function renderTabs() {
     const title = document.createElement('span'); title.className = 'title'; title.textContent = t.title || t.url || t.id;
     const u = document.createElement('span'); u.className = 'u'; u.textContent = t.url || '';
     body.append(title, u);
-    body.onclick = async () => { await api('/api/tabs/switch', { id: t.id }); closeDrawer(); };
+    body.onclick = async () => { await nav.tabSwitch(t.id); closeDrawer(); };
     // Closing takes two taps: the × turns into "close?" with a confirm (trash) and a cancel, and reverts after 4s.
     const x = document.createElement('button'); x.className = 'ib'; x.title = 'Close tab';
     x.innerHTML = '<svg><use href="icons.svg#close"/></svg>';
@@ -195,14 +221,14 @@ function renderTabs() {
     let revert;
     const arm = on => { x.classList.toggle('hidden', on); ask.classList.toggle('hidden', !on); li.classList.toggle('arming', on); clearTimeout(revert); if (on) revert = setTimeout(() => arm(false), 4000); };
     x.onclick = e => { e.stopPropagation(); arm(true); };
-    ask.querySelector('.yes').onclick = e => { e.stopPropagation(); arm(false); api('/api/tabs/close', { id: t.id }); };
+    ask.querySelector('.yes').onclick = e => { e.stopPropagation(); arm(false); nav.tabClose(t.id); };
     ask.querySelector('.no').onclick = e => { e.stopPropagation(); arm(false); };
     li.append(body, x, ask); list.appendChild(li);
   }
 }
 
 // ---------- tools (drawer footer) ----------
-$('reload').onclick = () => { api('/api/nav/reload'); closeDrawer(); };
+$('reload').onclick = () => { nav.go('reload'); closeDrawer(); };
 $('kbd').onclick = () => { closeDrawer(); key.focus(); };
 const toggleFullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
 $('fs').onclick = () => { toggleFullscreen(); closeDrawer(); };
@@ -233,7 +259,7 @@ function addLog(level, text) {
 // Uncaught page errors are not on the stream; poll the server. The buffer is append-only
 // (can't be cleared via the CLI in this version), so show only entries past what we've seen.
 async function pollErrors() {
-  if (!errBaseInit) return;                             // don't surface anything until the baseline is set
+  if (!errBaseInit || mode !== 'stream') return;                             // don't surface anything until the baseline is set
   try {
     const list = await (await fetch('/api/errors')).json();
     if (list.length < errSeen) errSeen = 0;            // session restarted -> buffer shrank
@@ -245,8 +271,7 @@ async function initErrorBaseline() {                    // skip errors already i
   try { errSeen = (await (await fetch('/api/errors')).json()).length; } catch { errSeen = 0; }
   errBaseInit = true;
 }
-setInterval(pollErrors, 20000);
-$('con').onclick = () => { consoleEl.classList.toggle('hidden'); errors = 0; badge.classList.add('hidden'); closeDrawer(); if (!consoleEl.classList.contains('hidden')) pollErrors(); };
+$('con').onclick = () => { consoleEl.classList.toggle('hidden'); errors = 0; badge.classList.add('hidden'); closeDrawer(); if (!consoleEl.classList.contains('hidden') && mode === 'stream') pollErrors(); };
 $('clear').onclick = () => { logEl.textContent = ''; consoleEl.classList.add('hidden'); };
 
 // ---------- controls reference ----------
@@ -312,6 +337,11 @@ function pollPads() {
   if (!rest) { stillFor = prevAx && ax.every((v, i) => v === prevAx[i]) && !b.some(Boolean) ? stillFor + 1 : 0; prevAx = ax; if (stillFor >= 30) rest = ax.slice(); }
   const edge = i => b[i] && !prevButtons[i];
   const lx = rel(ax[0] || 0, 0), ly = rel(ax[1] || 0, 1), rx = rel(ax[2] || 0, 2), ry = rel(ax[3] || 0, 3);
+  if (mode === 'live') {
+    if (edge(BIND.back)) nav.go('back');
+    if (edge(BIND.address)) toggleUrlBar(); if (edge(BIND.tabs)) toggleDrawer();
+    prevButtons = b; return;
+  }
   if (lx || ly) scrollBy(lx * 24, ly * 24);
   if (rx || ry) moveCursor(rx * 14, ry * 14);
   if (b[DPAD.up]) scrollBy(0, -40); if (b[DPAD.down]) scrollBy(0, 40); if (b[DPAD.left]) scrollBy(-40, 0); if (b[DPAD.right]) scrollBy(40, 0);
@@ -329,7 +359,7 @@ addEventListener('gamepadconnected', e => { logInput({ type: 'gamepadconnected',
 addEventListener('gamepaddisconnected', () => { clearInterval(padTimer); padTimer = null; });
 if ([...(navigator.getGamepads?.() || [])].some(p => p)) startPads();
 addEventListener('keydown', e => {                          // D-pad and buttons may arrive as key events on Android
-  if (document.activeElement === key || document.activeElement === urlEl) return;
+  if (document.activeElement === key || document.activeElement === urlEl || mode === 'live') return;
   logInput({ type: 'key', key: e.key, code: e.code, keyCode: e.keyCode });
   const step = 60, map = {
     ArrowUp: () => scrollBy(0, -step), ArrowDown: () => scrollBy(0, step), ArrowLeft: () => scrollBy(-step, 0), ArrowRight: () => scrollBy(step, 0),
@@ -415,8 +445,39 @@ function tempHtml() {
 async function pollTemp() {
   if (!showStats) return;
   try { const r = await fetch('/api/temp', { cache: 'no-store' }); if (r.ok) lastTemp = await r.json(); } catch {}
+  if (mode === 'live') { const el = $('stats'); if (el) el.innerHTML = `<span class="v">live</span>${tempHtml()}`; }
 }
 pollTemp(); setInterval(pollTemp, 5000);
 
+// ---------- mode toggle (top, beside the tabs button) ----------
+const shell = {                                          // what live.js may use
+  setTabs, addLog, addHistory, openUrlBar, closeDrawer, pollTemp,
+  setUrl: u => { if (document.activeElement !== urlEl) urlEl.value = u; },
+  clearLog: () => { logEl.textContent = ''; errors = 0; badge.classList.add('hidden'); },
+  status: msg => { status.textContent = msg; status.classList.toggle('hidden', !msg); },
+  streamUrl: () => urlEl.value,
+};
+function showMode() {
+  const b = $('modeBtn'); b.dataset.mode = mode; b.textContent = mode === 'live' ? 'Live' : 'Stream';
+  b.title = mode === 'live' ? 'Live page: tap for the stream' : 'Stream: tap for the live page';
+}
+async function setMode(m) {
+  if (m === mode && (m === 'stream' ? streamOn : live)) return;
+  const was = mode; mode = m; showMode();
+  try { localStorage.setItem('thorMode', m); } catch {}
+  tabs = []; tabsKey = ''; shell.clearLog(); closeDrawer();
+  if (m === 'live') {
+    streamStop();
+    try { live = live || await import('./live.js').then(mod => mod.create(shell)); live.enter(); }
+    catch (e) { live = null; mode = was; showMode(); shell.status('live mode failed to load'); if (was === 'stream') streamStart(); }
+  } else {
+    if (live) live.exit();
+    streamStart(); sentSize = ''; syncViewport(); pollTemp();
+  }
+}
+$('modeBtn').onclick = () => setMode(mode === 'live' ? 'stream' : 'live');
+
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-layout(); syncViewport(); connect(); initErrorBaseline();
+layout(); showMode();
+if (mode === 'live') { mode = 'stream'; setMode('live'); } else { streamStart(); syncViewport(); }
+initErrorBaseline();

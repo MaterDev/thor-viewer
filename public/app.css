@@ -95,3 +95,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #stats .sep { color: var(--ink-dim); opacity: .5; }
 #stats.hidden { display: none; }
 .btn.on { background: rgba(94,224,255,.28); }
+
+/* ---------- Live Page Mode (kept in one block; restyle at the glass merge) ---------- */
+#modeBtn { position: fixed; top: max(6px, env(safe-area-inset-top)); left: 56px; z-index: 20; height: 40px; padding: 0 12px; border-radius: 4px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-dim); font: 11px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+#modeBtn[data-mode="live"] { color: var(--accent); border-color: var(--line-strong); }
+#liveFrame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; z-index: 1; }
+#liveEmpty { position: fixed; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; color: var(--ink-dim); font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+#status { z-index: 5; }
