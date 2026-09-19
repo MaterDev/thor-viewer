@@ -15,11 +15,10 @@ Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts
 
 ## Live Page Mode (agents: this is all you need)
 
-- The viewer has two modes (toggle top-centre, left of the stats bar): **Stream** (your headless `thor` page, JPEG) and **Live** (Key's real page in the viewer app). Check with `curl -s 127.0.0.1:4850/api/mode`.
-- Once `tools/agent-browser-gate` is installed as `~/.local/bin/agent-browser`, plain `agent-browser` commands follow the mode automatically: in Live they act on Key's live page (use `@refs` from `snapshot`); `close`/`tab`/`set` are refused there.
-- Need your own headless page in Live (WebGL look, screenshots of it): add `--headless`. The gate borrows it (live page paused, a note shown, auto-resume after 60s max) and gives it back.
-- Live tabs: only the active one is loaded; switching reloads it (deliberate: nothing runs in the background).
-- Only one page runs at a time: in Live the headless page is paused (Debugger.pause), during a borrow the live page is. Code: `modes.mjs` (state machine), `live-bridge.mjs`, `headless.mjs`, `public/live.js`. Tests: `npm run test:live`.
+- Two modes (toggle top-centre, left of the stats bar): **Stream** (your headless `thor` page, JPEG) and **Live** (Key's real page in the viewer app). Check: `curl -s 127.0.0.1:4850/api/mode`.
+- `~/.local/bin/agent-browser` is the routing gate (`tools/agent-browser-gate`): plain commands follow the mode; in Live they act on Key's page (`@refs` from `snapshot`), `close`/`tab`/`set`/`session`/`stream` are refused. `--headless` borrows your own page for one command. Scripts that always mean the headless page (tests, start.sh, this server) set `THOR_GATE=off`. Install/remove: `bash tools/install-gate.sh install` / `uninstall` (`status` to check).
+- Live falls back to Stream by itself (with a notice) if adb/CDP is missing or lost; the headless page is paused in Live only while the gate is installed (`LIVE_PAUSE_HEADLESS=auto`). Live tabs: only the active one is loaded; switching reloads it (deliberate).
+- Code: `modes.mjs` (state machine), `live-bridge.mjs`, `headless.mjs`, `public/live.js`. Tests: `npm run test:live`. Risks and mitigations: `docs/live-mode-risks.md`.
 
 ## How it works
 
