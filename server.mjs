@@ -3,7 +3,7 @@
 // errors (the live stream carries console output but not exceptions).
 // Run: node server.mjs   (prints the URL)
 import { createServer } from 'node:http';
-import { readFile, stat, appendFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, stat, appendFile, readdir, writeFile, rename, copyFile, mkdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,9 +79,29 @@ function cleanShared(s) {
 async function readShared() { try { return cleanShared(JSON.parse(await readFile(TABS_FILE, 'utf8'))) || { tabs: [], active: null, next: 1 }; } catch { return { tabs: [], active: null, next: 1 }; } }
 async function writeShared(s) { await writeFile(TABS_FILE, JSON.stringify(s)); }
 // pinned tabs: [{ id, url, title }] in pin order (public/pins.js explains the matching)
-const PINS_FILE = process.env.THOR_PINS_FILE || '/home/key/.cache/thor-viewer-pins.json';
-async function readPins() { try { const p = JSON.parse(await readFile(PINS_FILE, 'utf8')); return Array.isArray(p) ? p : []; } catch { return []; } }
-async function writePins(p) { await writeFile(PINS_FILE, JSON.stringify(p.slice(0, 20))); }
+// Pins are Key's and must survive anything: kept in ~/.local/state (not the cache), written atomically
+// (temp file + rename), with the previous version kept as .bak and used if the main file is unreadable.
+const PINS_FILE = process.env.THOR_PINS_FILE || '/home/key/.local/state/thor-viewer/pins.json';
+const OLD_PINS_FILE = '/home/key/.cache/thor-viewer-pins.json';     // first location (2026-09-19), migrated once
+async function readPinsFrom(f) { const p = JSON.parse(await readFile(f, 'utf8')); if (!Array.isArray(p)) throw new Error('bad pins'); return p; }
+async function readPins() {
+  for (const f of [PINS_FILE, PINS_FILE + '.bak', ...(process.env.THOR_PINS_FILE ? [] : [OLD_PINS_FILE])]) {
+    try { return await readPinsFrom(f); } catch {}
+  }
+  return [];
+}
+async function writePins(p) {
+  await mkdir(PINS_FILE.replace(/\/[^/]*$/, ''), { recursive: true });
+  await copyFile(PINS_FILE, PINS_FILE + '.bak').catch(() => {});
+  await writeFile(PINS_FILE + '.tmp', JSON.stringify(p.slice(0, 20), null, 1)); await rename(PINS_FILE + '.tmp', PINS_FILE);
+}
+// Who may pin or unpin: Key in the viewer drawer (a same-origin fetch from the viewer page: the browser sets
+// Sec-Fetch-Site and Origin, which a stray curl doesn't), or the pins tool (tools/pins), which a Claude Code
+// hook lets agents run only when Key's latest message asks for it (~/.claude/hooks/guard-pins.py).
+function mayChangePins(req) {
+  if (req.headers['x-thor-pins'] === 'tools/pins') return true;
+  return req.headers['sec-fetch-site'] === 'same-origin' && req.headers.origin === `http://${req.headers.host}`;
+}
 async function pinnedView(tabs) {                              // tabs -> pinned-first order, persisting pin moves
   const r = applyPins(await readPins(), tabs); if (r.changed) await writePins(r.pins); return r.order;
 }
@@ -215,6 +235,10 @@ createServer(async (req, res) => {
   }
   if (path === '/api/pins' && req.method === 'POST') {
     if (!/^application\/json/.test(req.headers['content-type'] || '')) { res.writeHead(415); return res.end(); }
+    if (!mayChangePins(req)) {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, reason: 'pins are changed only by Key in the viewer drawer, or with tools/pins when Key asks' }));
+    }
     let body = ''; for await (const c of req) body += c;
     let p = {}; try { p = JSON.parse(body || '{}'); } catch {}
     let pins = await readPins(), ok = false;
@@ -288,5 +312,6 @@ createServer(async (req, res) => {
   }
 }).listen(PORT, '127.0.0.1', () => {
   live.recoverAtStartup();
+  stat(PINS_FILE).catch(async () => { const p = await readPins(); if (p.length) await writePins(p); });   // migrate pins to the durable file
   console.log(`Thor Viewer running at http://127.0.0.1:${PORT}/`);
 });

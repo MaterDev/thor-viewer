@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Pinned tabs from the command line. Pins are Key's: `list` is free, but `pin`/`unpin` are for when Key asks.
+# A Claude Code hook (~/.claude/hooks/guard-pins.py) blocks pin/unpin unless Key's latest message mentions pinning.
+#   tools/pins list                 numbered pins, then the open tabs (with ids)
+#   tools/pins pin <tab id|url>     pin an open tab (id from `list`, e.g. St2 or t2; or its exact URL)
+#   tools/pins unpin <n|url>        unpin by number from `list`, or by URL
+set -euo pipefail
+V="${THOR_VIEWER_URL:-http://127.0.0.1:4850}"
+post() { curl -s -m 10 -X POST -H 'content-type: application/json' -H 'x-thor-pins: tools/pins' -d "$1" "$V/api/pins"; }
+py() { python3 -c "$1" "${@:2}"; }
+
+case "${1:-list}" in
+  list)
+    curl -s -m 30 "$V/api/shared-tabs" | py '
+import json, sys
+s = json.load(sys.stdin); pins = [t for t in s["tabs"] if t.get("pinned")]
+print("pinned:" if pins else "pinned: none")
+for i, t in enumerate(pins, 1): print(f"  {i}. {t['"'"'url'"'"']}  ({t['"'"'id'"'"']})")
+print("tabs:")
+for t in s["tabs"]: print(f"  {t['"'"'id'"'"']}{'"'"' *'"'"' if t['"'"'id'"'"'] == s.get('"'"'active'"'"') else '"'"''"'"'}  {t['"'"'url'"'"']}")' ;;
+  pin|unpin)
+    ref="${2:?usage: tools/pins $1 <ref>}"
+    body=$(curl -s -m 30 "$V/api/shared-tabs" | py '
+import json, sys
+op, ref = sys.argv[1], sys.argv[2]
+s = json.load(sys.stdin); tabs = s["tabs"]; pins = [t for t in tabs if t.get("pinned")]
+strip = lambda x: str(x).lstrip("S")
+if op == "unpin" and ref.isdigit() and 1 <= int(ref) <= len(pins): t = pins[int(ref) - 1]
+else: t = next((t for t in tabs if strip(t["id"]) == strip(ref) or t["url"] == ref), None)
+if not t: sys.exit("no such tab: " + ref)
+print(json.dumps({"op": op, "id": t["id"], "url": t["url"], "title": t.get("title", "")}))' "$1" "$ref")
+    r=$(post "$body"); case "$r" in *'"ok":true'*) echo "✓ $1: $(py 'import json,sys; print(json.loads(sys.argv[1])["url"])' "$body")";; *) echo "failed: $r" >&2; exit 1;; esac ;;
+  *) sed -n 2,6p "$0"; exit 2 ;;
+esac
