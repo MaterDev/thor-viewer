@@ -51,8 +51,9 @@ const themeJs = t => `(() => { const t = ${JSON.stringify(t)}; const go = () => 
   if (t === 'standard') delete r.dataset.theme; else r.dataset.theme = t;
   window.dispatchEvent(new CustomEvent('thor:theme', { detail: { theme: t } })); };
   go(); if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); return t; })()`;
-async function applyTheme() {
+async function applyTheme(force = false) {
   const t = await getTheme();
+  if (t === 'standard' && !force) return { ok: true, skipped: true };        // a fresh page is already standard
   if (live.status().attached) return live.evalInFrame(themeJs(t));             // Live: over CDP into the live frame
   return { ok: await runAgentBrowser(['eval', themeJs(t)]) };                    // Stream: the headless page (gate off)
 }
@@ -124,7 +125,7 @@ createServer(async (req, res) => {
     if (!/^application\/json/.test(req.headers['content-type'] || '')) { res.writeHead(415); return res.end(); }
     let body = ''; for await (const c of req) body += c;
     if (path === '/api/theme') { const { theme } = JSON.parse(body || '{}'); if (!THEMES.includes(theme)) { res.writeHead(400); return res.end(); } await writeFile(THEME_FILE, theme + '\n'); }
-    const r = await applyTheme();
+    const r = await applyTheme(path === '/api/theme');                          // a change always applies; a navigation skips standard
     res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ theme: await getTheme(), applied: !!(r && r.ok) }));
   }
   if (path === '/api/temp') {

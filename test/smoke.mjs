@@ -44,7 +44,7 @@ await ab('open', testUrl);
 const browser = await chromium.launch({ executablePath: CHROMIUM, headless: true, args: ['--no-sandbox', '--disable-gpu'] });
 const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
 const pageErrors = [];
-page.on('console', m => { if (m.type() === 'error' && !/status of 403/.test(m.text())) pageErrors.push(m.text()); }); // the viewport-guard check causes an intentional 403
+page.on('console', m => { if (m.type() === 'error' && !/status of 403/.test(m.text())) pageErrors.push(m.text() + ' @ ' + (m.location()?.url || '?')); }); // the viewport-guard check causes an intentional 403
 page.on('pageerror', e => pageErrors.push(String(e)));
 
 try {
@@ -55,6 +55,7 @@ try {
   check('Carbon icon sprite loaded', await page.evaluate(() => fetch('icons.svg').then(r => r.ok)));
 
   // Shell stats bar: persistent, thin, translucent, centered in the gap between the corner buttons, click-through.
+  await until(() => page.evaluate(() => /fps/.test(document.getElementById('stats')?.textContent || '')), 3000);   // the bar flushes once a second, even on an idle stream
   const stats = await page.evaluate(() => { const el = document.getElementById('stats'); if (!el) return null; const cs = getComputedStyle(el); const r = el.getBoundingClientRect(); const tabs = document.getElementById('tabsBtn').getBoundingClientRect(); const url = document.getElementById('urlBtn').getBoundingClientRect(); return { visible: cs.display !== 'none', pe: cs.pointerEvents, translucent: parseFloat(cs.opacity) < 1, thin: r.height <= 28, gap: r.left > tabs.right && r.right < url.left, hasFps: /fps/.test(el.textContent) }; });
   check('stats bar visible, thin, translucent, click-through', !!stats && stats.visible && stats.thin && stats.translucent && stats.pe === 'none', JSON.stringify(stats));
   check('stats bar centered between the corner buttons and shows fps', !!stats && stats.gap && stats.hasFps, JSON.stringify(stats));

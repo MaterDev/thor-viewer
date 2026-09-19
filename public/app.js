@@ -19,9 +19,8 @@ const themeParam = (() => { try { return new URLSearchParams(location.search).ge
 { let t = themeParam; try { t = t || localStorage.getItem('thorTheme'); } catch {} if (t) setTheme(t, false); }
 if (!themeParam) fetch('/api/theme').then(r => r.json()).then(r => { if (r.theme !== currentTheme()) setTheme(r.theme, false); }).catch(() => {});
 let themeApplyTimer = 0;
-function applyThemeToPage() {                        // after a Stream navigation (Live re-applies server-side)
-  if (currentTheme() === 'standard') return;
-  clearTimeout(themeApplyTimer);
+function applyThemeToPage() {                        // after a Stream navigation (Live re-applies server-side);
+  clearTimeout(themeApplyTimer);                      // the server holds the choice and skips Standard (nothing to undo on a fresh page)
   themeApplyTimer = setTimeout(() => fetch('/api/theme/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 400);
 }
 
@@ -463,11 +462,11 @@ const SENSORS = [                                        // [key, label, icon, w
 ];
 const toF = c => c * 9 / 5 + 32;   // declared before applyStats() first runs
 try { showStats = localStorage.getItem('thorStats') !== '0'; } catch {}
-function statTick(nbytes) {
+function statTick(nbytes, flush = false) {
   if (!showStats) return;
-  statCount++; statBytes += (nbytes || 0);
+  if (!flush) { statCount++; statBytes += (nbytes || 0); }
   const now = performance.now(), dt = now - statLast;
-  if (dt >= 500) {
+  if (dt >= 500 && (!flush || dt >= 1000)) {
     const fps = Math.round(statCount * 1000 / dt);
     const mbps = (statBytes * 8 / 1e6) / (dt / 1000);
     const el = $('stats');
@@ -507,6 +506,8 @@ async function pollTemp() {
   renderTemps();
 }
 pollTemp(); setInterval(pollTemp, 5000); setInterval(pollLiveFps, 2000);
+// an idle stream sends no frames: flush the stats once a second so the bar shows 0 fps instead of sticking at '–'
+setInterval(() => { if (showStats && mode !== 'live') statTick(0, true); }, 1000);
 
 // ---------- mode toggle (top, beside the tabs button) ----------
 const shell = {                                          // what live.js may use
