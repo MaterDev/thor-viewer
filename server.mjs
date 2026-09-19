@@ -137,5 +137,6 @@ createServer(async (req, res) => {
     res.writeHead(404); res.end('not found');
   }
 }).listen(PORT, '127.0.0.1', () => {
+  live.recoverAtStartup();
   console.log(`Thor Viewer running at http://127.0.0.1:${PORT}/`);
 });

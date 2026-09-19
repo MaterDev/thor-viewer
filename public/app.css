@@ -103,3 +103,5 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
 #liveFrame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; z-index: 1; }
 #liveEmpty { position: fixed; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; color: var(--ink-dim); font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 #status { z-index: 5; }
+#liveNote { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 26; max-width: calc(100vw - 32px); padding: 8px 12px; border-radius: 4px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink); font: 12px var(--sans); }

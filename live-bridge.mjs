@@ -20,13 +20,12 @@ const USES_ADB = !process.env.LIVE_CDP;
 const ADB = process.env.LIVE_ADB || 'adb';
 const THOR_ADB = process.env.THOR_ADB_SCRIPT || '/code/projects/thor-infrastructure/bin/thor-adb';
 const FRAME_NAME = 'thorLive';
-// One GPU: while Live mode is on, the headless agent-browser session must not render the same page.
-// It is "parked" on about:blank with its screencast off, and restored when Live mode ends.
-const AGENT_BROWSER = process.env.AGENT_BROWSER || '/home/key/.local/bin/agent-browser';
-const PARK = process.env.LIVE_PARK !== '0';
-const PARK_ARGS = (process.env.LIVE_PARK_ARGS || '').split(' ').filter(Boolean);   // e.g. "--session x --profile y" in tests
-const STREAM_PORT = process.env.LIVE_STREAM_PORT || '9223';
-const UNPARK_DELAY = 3000;          // a viewer reload in Live mode reconnects within this; don't bounce the headless page
+import { createModes } from './modes.mjs';
+import { freezeHeadless, thawHeadless } from './headless.mjs';
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
+const MODE_FILE = process.env.LIVE_MODE_FILE || '/home/key/.cache/thor-viewer-mode';
+const MODE_LOG = process.env.LIVE_MODE_LOG || '/home/key/.cache/thor-viewer-modes.log';
+const LEAVE_GRACE = 3000;           // a viewer reload in Live mode reconnects within this; don't bounce modes
 const LOG_KEEP = 300;
 
 const run = (cmd, args, timeout) => new Promise(resolve =>
@@ -75,41 +74,38 @@ const S = {
   liveSession: null,          // set when the iframe is out-of-process (its own CDP session)
   contexts: new Map(),        // `${session||''}:${contextId}` -> frameId
   url: '', title: '', logs: [], clients: new Set(), createdForward: false, starting: null,
-  parked: null,                // { url } of the headless session before Live mode took over
-  fallback: false,             // the agent has the page loaded headless right now (WebGL look)
-  unparkTimer: null,
-  lastLiveUrl: '',             // survives stop(): the page Stream mode gets back
+  leaveTimer: null, origin: '',
 };
-const ab = (args, ms = 20000) => run(AGENT_BROWSER, [...PARK_ARGS, ...args], ms);
-
-// Park the headless session: remember its URL, stop its screencast, blank it.
-export async function park() {
-  clearTimeout(S.unparkTimer); S.unparkTimer = null;
-  if (!PARK || S.parked) return { ok: true, parked: S.parked };
-  const url = (await ab(['get', 'url'], 10000)).out.trim().split('\n').pop();
-  S.parked = { url: /^https?:/.test(url) ? url : '' };
-  await ab(['stream', 'disable'], 10000);
-  await ab(['open', 'about:blank']);
-  return { ok: true, parked: S.parked };
+// The one state machine. Effects: the headless page freezes while Live runs; during a borrow the
+// live page (the whole viewer app target) freezes instead, after the viewer shows its note.
+// While the live page is frozen it cannot take a tap, so Key's "resume" is an Android notification
+// button (runs in Termux, which has curl). The deadline resumes it anyway.
+function borrowNotice(until) {
+  if (!S.origin || process.env.LIVE_NOTIFY === '0') return;
+  const at = new Date(until).toTimeString().slice(0, 8);
+  const resume = `curl -s -m 5 -X POST -H 'content-type: application/json' -d '{"owner":"*"}' ${S.origin}api/mode/return`;
+  run('termux-notification', ['--id', 'thor-live-borrow', '--title', 'Live page paused', '--content', `An agent is using its own browser. Resumes by ${at}.`,
+    '--button1', 'Resume now', '--button1-action', resume], 5000);
 }
-// Restore it: open the page Live was showing (same URL and params), then its stream on the usual port.
-export async function unpark(url) {
-  if (!S.parked) return { ok: true };
-  const target = /^https?:/.test(url || '') ? url : S.parked.url;
-  S.parked = null; S.fallback = false; S.lastLiveUrl = '';
-  if (target) await ab(['open', target]);
-  const r = await ab(['stream', 'enable', '--port', STREAM_PORT], 10000);
-  return { ok: r.ok, url: target };
+// After a crash or restart the headless page may still be frozen from a Live session: thaw it once.
+export async function recoverAtStartup() {
+  let last = ''; try { last = (await readFile(MODE_FILE, 'utf8')).trim(); } catch {}
+  if (last === 'live' || last === 'borrowed') { try { await thawHeadless(); } catch {} writeFile(MODE_FILE, 'stream\n').catch(() => {}); }
 }
-// The agent's WebGL fallback: load the live page headless briefly (on), then blank it again (off).
-async function fallback(on) {
-  if (!S.parked) return { ok: false, reason: 'Live mode is not on' };
-  if (on) { if (!/^https?:/.test(S.url)) return { ok: false, reason: 'no live page' }; S.fallback = true; const r = await ab(['open', S.url]); return { ok: r.ok, url: S.url }; }
-  S.fallback = false; const r = await ab(['open', 'about:blank']); return { ok: r.ok };
-}
+export const modes = createModes({
+  freezeHeadless, thawHeadless,
+  pauseLive: async until => {
+    emit({ type: 'mode', mode: 'borrowed', until });
+    borrowNotice(until);
+    await new Promise(r => setTimeout(r, 250));                 // let the note paint before the freeze
+    if (S.cdp) await S.cdp.send('Page.setWebLifecycleState', { state: 'frozen' });
+  },
+  resumeLive: async () => { run('termux-notification-remove', ['thor-live-borrow'], 5000); if (S.cdp) await S.cdp.send('Page.setWebLifecycleState', { state: 'active' }); },
+  onChange: snap => { emit({ type: 'mode', ...snap }); writeFile(MODE_FILE, snap.mode + '\n').catch(() => {}); },
+  log: line => { console.log(line); appendFile(MODE_LOG, line + '\n').catch(() => {}); },
+});
 const attached = () => !!S.cdp;
 function emit(ev) {
-  if (ev.type === 'url' && /^https?:/.test(ev.url || '')) S.lastLiveUrl = ev.url;
   if (ev.type === 'console' || ev.type === 'error') { S.logs.push({ t: Date.now(), ...ev }); if (S.logs.length > LOG_KEEP) S.logs.shift(); }
   const line = `data: ${JSON.stringify(ev)}\n\n`;
   for (const res of S.clients) res.write(line);
@@ -232,14 +228,15 @@ export async function start(token, origin) {
 
 export function stop(removeForward = true) {
   const c = S.cdp; S.cdp = null;
-  if (removeForward && S.parked) {                       // leaving Live mode: give the stream its page back
-    clearTimeout(S.unparkTimer);
-    S.unparkTimer = setTimeout(() => { S.unparkTimer = null; if (!S.clients.size) unpark(S.lastLiveUrl); }, UNPARK_DELAY);
-  }
   if (c) c.close();
   Object.assign(S, { targetId: null, token: null, mainFrameId: null, liveFrameId: null, liveSession: null, url: '', title: '', logs: [] });
   S.contexts.clear();
   if (removeForward && S.createdForward) { S.createdForward = false; run(ADB, ['forward', '--remove', 'tcp:9222'], 5000); }
+}
+// The viewer left Live mode (or disappeared): back to Stream after a short grace.
+function scheduleLeave(why) {
+  clearTimeout(S.leaveTimer);
+  S.leaveTimer = setTimeout(() => { S.leaveTimer = null; if (!S.clients.size) { stop(); modes.leaveLive(why); } }, LEAVE_GRACE);
 }
 
 export async function evalInFrame(expression) {
@@ -254,23 +251,31 @@ export async function evalInFrame(expression) {
 }
 
 export function status() {
-  return { attached: attached(), parked: S.parked, fallback: S.fallback, endpoint: ENDPOINT, targetId: S.targetId, frameUrl: S.url, title: S.title, outOfProcess: !!S.liveSession, clients: S.clients.size };
+  return { attached: attached(), mode: modes.get().mode, endpoint: ENDPOINT, targetId: S.targetId, frameUrl: S.url, title: S.title, outOfProcess: !!S.liveSession, clients: S.clients.size };
 }
 
 const NAV_JS = { back: 'history.back()', forward: 'history.forward()', reload: 'location.reload()' };
 
 // Route handler: returns true if it handled the request.
 export async function handle(req, res, path, readBody) {
-  if (!path.startsWith('/api/live/')) return false;
   const json = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-cache' }); res.end(JSON.stringify(obj)); };
-  const op = path.slice(10);
+  if (path === '/api/mode' && req.method === 'GET') {
+    const m = { ...modes.get(), viewerTargetId: S.targetId, cdp: ENDPOINT, liveUrl: S.url, liveTitle: S.title };
+    if (new URL(req.url, 'http://x').searchParams.get('format') === 'sh') {       // for the agent-browser gate
+      res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'no-cache' });
+      res.end(Object.entries(m).map(([k, v]) => `${k}=${v ?? ''}`).join('\n') + '\n'); return true;
+    }
+    json(200, m); return true;
+  }
+  if (!path.startsWith('/api/live/') && !path.startsWith('/api/mode/')) return false;
+  const op = path.startsWith('/api/mode/') ? 'mode-' + path.slice(10) : path.slice(10);
   if (req.method === 'GET' && op === 'status') { json(200, status()); return true; }
   if (req.method === 'GET' && op === 'logs') { json(200, S.logs); return true; }
   if (req.method === 'GET' && op === 'events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     res.write(`data: ${JSON.stringify({ type: 'state', ...status() })}\n\n`);
-    S.clients.add(res);
-    req.on('close', () => { S.clients.delete(res); if (!S.clients.size) stop(); });   // last viewer left Live mode
+    S.clients.add(res); clearTimeout(S.leaveTimer); S.leaveTimer = null;
+    req.on('close', () => { S.clients.delete(res); if (!S.clients.size) scheduleLeave('viewer left Live mode'); });
     return true;
   }
   if (req.method !== 'POST') { json(405, { ok: false }); return true; }
@@ -278,13 +283,19 @@ export async function handle(req, res, path, readBody) {
   if (!/^application\/json/.test(req.headers['content-type'] || '')) { json(415, { ok: false, reason: 'application/json only' }); return true; }
   let body = {}; try { body = JSON.parse(await readBody() || '{}'); } catch {}
   if (op === 'start') {
-    await park();                                      // before anything else: free the GPU
-    const origin = `http://${req.headers.host}/`;
+    const m = await modes.enterLive({});                        // freezes the headless page first
+    if (!m.ok) { json(409, m); return true; }
+    const origin = `http://${req.headers.host}/`; S.origin = origin;
     json(200, await start(String(body.token || ''), origin)); return true;
   }
-  if (op === 'stop') { stop(); json(200, { ok: true }); return true; }
+  if (op === 'stop') { stop(); json(200, await modes.leaveLive('viewer switched to Stream')); return true; }
   if (op === 'nav' && NAV_JS[body.op]) { json(200, await evalInFrame(NAV_JS[body.op])); return true; }
-  if (op === 'fallback') { json(200, await fallback(!!body.on)); return true; }
+  if (op === 'open' && /^https?:\/\/\S+$/.test(body.url || '')) {  // the viewer opens it in its frame (it owns the tabs)
+    if (!S.clients.size) { json(409, { ok: false, reason: 'no viewer in Live mode' }); return true; }
+    emit({ type: 'open', url: body.url }); json(200, { ok: true }); return true;
+  }
   if (op === 'eval' && typeof body.expression === 'string') { json(200, await evalInFrame(body.expression)); return true; }
+  if (op === 'mode-borrow') { const r = await modes.borrow(String(body.owner || ''), Number(body.ms) || undefined); json(r.ok ? 200 : 409, r); return true; }
+  if (op === 'mode-return') { const r = await modes.giveBack(String(body.owner || '')); json(r.ok ? 200 : 409, r); return true; }
   json(400, { ok: false }); return true;
 }

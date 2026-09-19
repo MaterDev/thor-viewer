@@ -19,7 +19,12 @@ export function create(shell) {
   const token = (crypto.randomUUID?.() || String(Math.random()).slice(2)) + '';
   window.__thorLiveToken = token;                        // how the server finds this page over CDP
 
-  let frameEl = null, emptyEl = null, events = null, on = false;
+  let frameEl = null, emptyEl = null, noteEl = null, events = null, on = false;
+  function note(until) {                                  // shown just before the server freezes this page
+    if (!until) { noteEl?.remove(); noteEl = null; return; }
+    if (!noteEl) { noteEl = document.createElement('div'); noteEl.id = 'liveNote'; document.body.appendChild(noteEl); }
+    noteEl.textContent = `Paused: an agent is using its own browser · resumes by ${new Date(until).toTimeString().slice(0, 8)} · "Resume now" is in the notification`;
+  }
   const activeTab = () => state.tabs.find(t => t.id === state.active) || null;
   const publishTabs = () => shell.setTabs(state.tabs.map(t => ({ id: t.id, title: t.title || t.url, url: t.url, active: t.id === state.active })));
 
@@ -47,6 +52,8 @@ export function create(shell) {
       shell.setUrl(ev.url); shell.addHistory(ev.url);
     } else if (ev.type === 'title' && t) { t.title = ev.title; save(); publishTabs(); }
     else if (ev.type === 'console' || ev.type === 'error') shell.addLog(ev.level || 'log', ev.text);
+    else if (ev.type === 'mode') note(ev.mode === 'borrowed' ? ev.until : 0);
+    else if (ev.type === 'open' && ev.url) this_.open(ev.url);   // the agent asked to open a page
     else if (ev.type === 'state' && ev.attached === false && on && ev.reason) shell.addLog('warning', 'live: ' + ev.reason);
   }
 
@@ -59,7 +66,7 @@ export function create(shell) {
     else shell.addLog('info', 'live: agent attached to this page');
   }
 
-  return {
+  const this_ = {
     enter() {
       on = true; shell.status('');
       if (!state.tabs.length) {                         // first time: take the page the stream was showing
@@ -72,7 +79,7 @@ export function create(shell) {
     exit() {
       on = false;
       events?.close(); events = null; post('/api/live/stop');
-      frameEl?.remove(); frameEl = null; emptyEl?.remove(); emptyEl = null;
+      frameEl?.remove(); frameEl = null; emptyEl?.remove(); emptyEl = null; note(0);
     },
     open(url) {
       let t = activeTab();
@@ -91,4 +98,5 @@ export function create(shell) {
       save(); publishTabs(); show(activeTab()?.url || '');
     },
   };
+  return this_;
 }
