@@ -358,6 +358,17 @@ export async function handle(req, res, path, readBody) {
     if (!S.clients.size) { json(409, { ok: false, reason: 'no viewer in Live mode' }); return true; }
     emit({ type: 'open', url: body.url }); json(200, { ok: true }); return true;
   }
+  // the viewer owns the tabs, so tab commands are messages to it (Key, 2026-09-19: agents may open tabs in Live)
+  if (op === 'tab-new') {
+    if (!S.clients.size) { json(409, { ok: false, reason: 'no viewer in Live mode' }); return true; }
+    const url = /^https?:\/\/\S+$/.test(body.url || '') ? body.url : '';
+    emit({ type: 'tab-new', url }); json(200, { ok: true }); return true;
+  }
+  if (op === 'tab-close' || op === 'tab-switch') {
+    if (!S.clients.size) { json(409, { ok: false, reason: 'no viewer in Live mode' }); return true; }
+    if (!body.id) { json(400, { ok: false, reason: 'need a tab id' }); return true; }
+    emit({ type: op, id: String(body.id) }); json(200, { ok: true }); return true;
+  }
   if (op === 'eval' && typeof body.expression === 'string') { json(200, await evalInFrame(body.expression)); return true; }
   if (op === 'mode-borrow') { const r = await modes.borrow(String(body.owner || ''), Number(body.ms) || undefined); json(r.ok ? 200 : 409, r); return true; }
   if (op === 'mode-return') { const r = await modes.giveBack(String(body.owner || '')); json(r.ok ? 200 : 409, r); return true; }

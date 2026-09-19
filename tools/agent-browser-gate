@@ -5,7 +5,8 @@
 #   Stream mode (or the viewer is unreachable): commands go to the headless `thor` session, as always.
 #   Live mode:  commands go to Key's live page (the viewer app's own CDP target). Page commands are
 #               translated (open/back/forward/reload/eval/get url/get title/console/errors); commands that
-#               would break the viewer (close, tab, set, stream, ...) are refused with a clear message.
+#               would break the viewer (close, set, stream, ...) are refused with a clear message. Tabs are allowed:
+#               `tab new|list|<id>` go to the viewer, and `tab close <id>` too, except for a pinned tab.
 #   --headless: in Live mode, borrow the headless page for this one command (the viewer freezes the live
 #               page, thaws the headless one, and reverses it after; a trap gives it back on any exit).
 # Only the default `thor` session is routed; any other --session passes straight through.
@@ -56,23 +57,29 @@ done
 cmd=""; [ "$cmdi" -ge 0 ] && cmd="${args[$cmdi]}"
 rest=("${args[@]:$((cmdi + 1))}")
 
-# ---------- pinned tabs (Key, 2026-09-19): never navigate or close a pinned tab ----------
-# Stream: `open` on a pinned tab opens a new tab instead. Live: refused (the live page is Key's). Pins live in the viewer.
-pinned=0
-case "$cmd" in open|goto|navigate|tab)
-  if [ "$cmd" != tab ] || [ "${rest[0]:-}" = close -a -z "${rest[1]:-}" ]; then
-    case "$(curl -s -m 2 "$VIEWER/api/pins/active" 2>/dev/null)" in *'"pinned":true'*) pinned=1;; esac
-  fi ;;
+# ---------- pinned tabs (Key, 2026-09-19) ----------
+# A pinned tab is never navigated, reused or closed. Everything else about tabs is allowed in both modes:
+# opening a new tab, switching, and closing an unpinned one.
+pinref=""
+case "$cmd" in
+  open|goto|navigate) pinref="active" ;;
+  tab) [ "${rest[0]:-}" = close ] && pinref="${rest[1]:-active}" ;;
 esac
+pinned=0
+if [ -n "$pinref" ]; then
+  if [ "$pinref" = active ]; then
+    case "$(curl -s -m 2 "$VIEWER/api/pins/active" 2>/dev/null)" in *'"pinned":true'*) pinned=1;; esac
+  else                                              # a named tab: is that one pinned?
+    case "$(curl -s -m 5 "$VIEWER/api/shared-tabs" 2>/dev/null | tr '{' '\n' | grep -F "\"${pinref#S}\"" )" in *'"pinned":true'*) pinned=1;; esac
+  fi
+fi
 if [ "$pinned" = 1 ]; then
   case "$cmd" in
     open|goto|navigate)
-      if [ "$mode" = stream ]; then
-        echo "agent-browser: the current tab is pinned; opening in a new tab instead" >&2
-        exec "$REAL" "${args[@]:0:$cmdi}" tab new "${rest[@]}"
-      fi
-      echo "agent-browser (Live mode): the current tab is pinned; not navigating it (ask Key, or add --headless)" >&2; exit 77 ;;
-    *) echo "agent-browser: the current tab is pinned; not closing it (Key unpins it in the viewer drawer)" >&2; exit 77 ;;
+      echo "agent-browser: the current tab is pinned; opening in a new tab instead" >&2
+      if [ "$mode" = stream ]; then exec "$REAL" "${args[@]:0:$cmdi}" tab new "${rest[@]}"; fi
+      set -- ; cmd=tab; rest=(new "${rest[@]}") ;;                 # Live: fall through to the tab handler below
+    *) echo "agent-browser: that tab is pinned; not closing it (Key unpins it in the viewer drawer)" >&2; exit 77 ;;
   esac
 fi
 [ "$mode" = stream ] && exec "$REAL" "${args[@]}"
@@ -113,6 +120,21 @@ case "$cmd" in
   open|goto|navigate)
     url="${rest[0]:-}"; [[ "$url" =~ ^https?:// ]] || url="https://$url"
     r=$(post /api/live/open "{\"url\":$(jstr "$url")}"); case "$r" in *'"ok":true'*) echo "✓ opened in the live page: $url"; exit 0;; *) say "open failed: $r"; exit 1;; esac ;;
+  tab)
+    case "${rest[0]:-list}" in
+      new)                                                   # the viewer owns the tabs; ask it for a new one
+        url="${rest[1]:-}"; [ -n "$url" ] && { [[ "$url" =~ ^https?:// ]] || url="https://$url"; }
+        r=$(post /api/live/tab-new "{\"url\":$(jstr "$url")}")
+        case "$r" in *'"ok":true'*) echo "✓ new tab in the viewer${url:+: $url}"; exit 0;; *) say "tab new failed: $r"; exit 1;; esac ;;
+      close)
+        id="${rest[1]:-}"; [ -n "$id" ] || { say "in Live, name the tab to close (tab list shows the ids); the active one is Key's"; exit 1; }
+        r=$(post /api/live/tab-close "{\"id\":$(jstr "$id")}")
+        case "$r" in *'"ok":true'*) echo "✓ closed $id"; exit 0;; *) say "tab close failed: $r"; exit 1;; esac ;;
+      list) curl -s -m 5 "$VIEWER/api/shared-tabs"; echo; exit 0 ;;
+      *)                                                     # tab <id>: switch
+        r=$(post /api/live/tab-switch "{\"id\":$(jstr "${rest[0]}")}")
+        case "$r" in *'"ok":true'*) echo "✓ switched to ${rest[0]}"; exit 0;; *) say "tab switch failed: $r"; exit 1;; esac ;;
+    esac ;;
   back|forward|reload)
     r=$(post /api/live/nav "{\"op\":\"$cmd\"}"); case "$r" in *'"ok":true'*) echo "✓ $cmd"; exit 0;; *) say "$cmd failed: $r"; exit 1;; esac ;;
   eval)

@@ -55,6 +55,9 @@ export function create(shell) {
     else if (ev.type === 'console' || ev.type === 'error') shell.addLog(ev.level || 'log', ev.text);
     else if (ev.type === 'mode') note(ev.mode === 'borrowed' ? ev.until : 0);
     else if (ev.type === 'open' && ev.url) this_.open(ev.url);   // the agent asked to open a page
+    else if (ev.type === 'tab-new') { this_.tabNew(); if (ev.url) this_.open(ev.url); }   // ...in a new tab
+    else if (ev.type === 'tab-switch' && ev.id) this_.tabSwitch(ev.id);
+    else if (ev.type === 'tab-close' && ev.id) this_.tabClose(ev.id);
     else if (ev.type === 'fallback' && on) shell.fallback(ev.reason, ev.heat);
     else if (ev.type === 'state' && ev.attached === false && on && ev.reason) shell.addLog('warning', 'live: ' + ev.reason);
   }

@@ -67,7 +67,10 @@ check "eval prints the value" test "$OUT" = '"42"'
 g get url; check "get url -> the live page URL" test "$OUT" = "http://127.0.0.1:4860/?plugin=x"
 g console; check "console -> live logs" grep -q hello <<<"$OUT"
 g close; check "close is refused in Live" test "$RC" = 64 -a ! -s "$T/real.log"
-g tab new; check "tab is refused in Live" test "$RC" = 64
+g tab new https://example.test/b; check "tab new -> the viewer opens a tab (Live)" grep -q '/api/live/tab-new {"url":"https://example.test/b"}' "$T/posts.log"
+check "tab new never reaches the real binary" test ! -s "$T/real.log"
+g tab t2; check "tab <id> -> the viewer switches" grep -q '/api/live/tab-switch {"id":"t2"}' "$T/posts.log"
+g tab close t2; check "tab close <id> -> the viewer closes it" grep -q '/api/live/tab-close {"id":"t2"}' "$T/posts.log"
 g --session thor snapshot; check "an explicit --session thor is replaced" grep -qx -- "--session thor-live --cdp 9222 snapshot" "$T/real.log"
 printf 'mode=live\nviewerTargetId=\n' >"$T/mode"
 g snapshot; check "live but not attached -> clear error, no fallback to the frozen page" test "$RC" = 69 -a ! -s "$T/real.log"
