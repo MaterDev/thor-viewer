@@ -143,6 +143,17 @@ try {
   const liveShown = await page.evaluate(m => [...document.querySelectorAll('#log div.error')].some(l => l.textContent.includes(m)), marker);
   check('new errors after load still show', liveShown);
 
+  // Drawer + Settings -> Themes (Standard glass / Solid: same palette, opaque, no backdrop-filter)
+  check('top-left button is the Drawer', (await page.getAttribute('#tabsBtn', 'title')) === 'Drawer');
+  await page.evaluate(() => document.getElementById('tabsBtn').click());
+  await page.evaluate(() => document.getElementById('settingsBtn').click());
+  check('settings modal opens with Standard and Solid', (await page.locator('#settingsBody [data-theme]').allTextContents()).join() === 'Standard,Solid');
+  await page.evaluate(() => document.querySelector('#settingsBody [data-theme="solid"]').click());
+  const solid = await page.evaluate(() => ({ t: document.documentElement.dataset.theme, bf: getComputedStyle(document.getElementById('tabsBtn')).backdropFilter }));
+  check('Solid theme: no backdrop-filter', solid.t === 'solid' && solid.bf === 'none', JSON.stringify(solid));
+  await page.evaluate(() => document.querySelector('#settingsBody [data-theme="standard"]').click());
+  await page.evaluate(() => document.getElementById('settingsClose').click());
+  check('settings closed = out of rendering', await page.evaluate(() => getComputedStyle(document.getElementById('settings')).display === 'none'));
   check('no JavaScript errors in the viewer page', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 } catch (e) {
   check('test run completed', false, String(e).slice(0, 200));
