@@ -478,15 +478,49 @@ async function setMode(m, persist = true) {
 $('modeBtn').onclick = () => setMode(mode === 'live' ? 'stream' : 'live');
 // Small glass notice, top centre; built on first use, removed when it times out (nothing left rendering).
 let noticeEl = null, noticeTimer = null;
-function notice(msg, ms = 7000) {
+function notice(msg, ms = 7000, action = null) {
   clearTimeout(noticeTimer);
   if (!noticeEl) { noticeEl = document.createElement('div'); noticeEl.id = 'notice'; noticeEl.setAttribute('role', 'status'); document.body.appendChild(noticeEl); }
   noticeEl.textContent = msg;
-  noticeTimer = setTimeout(() => { noticeEl?.remove(); noticeEl = null; }, ms);
+  const close = () => { clearTimeout(noticeTimer); noticeEl?.remove(); noticeEl = null; };
+  if (action) { const b = document.createElement('button'); b.textContent = action.label; b.onclick = () => { close(); action.run(); }; noticeEl.appendChild(b); }
+  noticeTimer = setTimeout(close, ms);
 }
 // Live could not start or lost its connection: back to Stream for now. Key's choice (thorMode) is kept,
 // so the next open tries Live again.
-shell.fallback = reason => { if (mode !== 'live') return; setMode('stream', false); notice('Live is unavailable, showing Stream. ' + (reason || '')); };
+shell.fallback = (reason, hot) => {
+  if (mode !== 'live') return;
+  setMode('stream', false);
+  if (hot) notice(reason || 'Too hot, switched to Stream.', 30000, { label: 'Back to Live', run: () => setMode('live') });  // no auto-return
+  else notice('Live is unavailable, showing Stream. ' + (reason || ''));
+};
+
+// ---------- heat guard switch (beside the mode pill) ----------
+// Tap: guard off for 30 min / back on. The state lives on the server (/api/heat), so a reload keeps it.
+// Long-press: shows the time left. The badge ticks once a minute, and only while the guard is off.
+let heatOffUntil = null, heatTick = null;
+function showHeat() {
+  const b = $('heatBtn'), left = $('heatLeft');
+  clearInterval(heatTick); heatTick = null;
+  const off = heatOffUntil && heatOffUntil > Date.now();
+  if (!off) { heatOffUntil = null; delete b.dataset.off; left.classList.add('hidden'); b.title = 'Heat guard on: Live switches to Stream if the device runs too hot. Tap to turn off for 30 min.'; return; }
+  const mins = Math.ceil((heatOffUntil - Date.now()) / 60000);
+  b.dataset.off = ''; left.textContent = mins + 'm'; left.classList.remove('hidden');
+  b.title = `Heat guard off for ${mins} more min. Tap to turn it back on.`;
+  heatTick = setInterval(showHeat, 60000);
+}
+async function heatSet(off) {
+  try { const r = await (await fetch('/api/heat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ off }) })).json(); heatOffUntil = r.offUntil; } catch {}
+  showHeat(); notice(heatOffUntil ? 'Heat guard off for 30 min.' : 'Heat guard on.', 3000);
+}
+{
+  const b = $('heatBtn'); let press = null, long = false;
+  b.addEventListener('pointerdown', () => { long = false; press = setTimeout(() => { long = true; notice(heatOffUntil ? `Heat guard off for ${Math.ceil((heatOffUntil - Date.now()) / 60000)} more min.` : 'Heat guard on.', 3000); }, 600); });
+  b.addEventListener('pointerup', () => clearTimeout(press));
+  b.addEventListener('pointercancel', () => clearTimeout(press));
+  b.onclick = () => { if (!long) heatSet(!heatOffUntil); };
+  fetch('/api/heat').then(r => r.json()).then(r => { heatOffUntil = r.offUntil; showHeat(); }).catch(() => {});
+}
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout(); showMode();

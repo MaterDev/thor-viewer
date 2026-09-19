@@ -54,7 +54,7 @@ export function create(shell) {
     else if (ev.type === 'console' || ev.type === 'error') shell.addLog(ev.level || 'log', ev.text);
     else if (ev.type === 'mode') note(ev.mode === 'borrowed' ? ev.until : 0);
     else if (ev.type === 'open' && ev.url) this_.open(ev.url);   // the agent asked to open a page
-    else if (ev.type === 'fallback' && on) shell.fallback(ev.reason);
+    else if (ev.type === 'fallback' && on) shell.fallback(ev.reason, ev.heat);
     else if (ev.type === 'state' && ev.attached === false && on && ev.reason) shell.addLog('warning', 'live: ' + ev.reason);
   }
 

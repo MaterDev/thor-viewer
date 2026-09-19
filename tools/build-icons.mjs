@@ -1,7 +1,7 @@
 // Builds public/icons.svg, a sprite of the Carbon icons the viewer uses.
 // Run after changing ICONS: node tools/build-icons.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
-const ICONS = ['menu', 'close', 'add', 'arrow--left', 'arrow--right', 'renew', 'keyboard', 'terminal', 'maximize', 'minimize', 'link', 'chevron--right', 'search', 'checkmark', 'trash-can', 'help', 'game--console'];
+const ICONS = ['menu', 'close', 'add', 'arrow--left', 'arrow--right', 'renew', 'keyboard', 'terminal', 'maximize', 'minimize', 'link', 'chevron--right', 'search', 'checkmark', 'trash-can', 'help', 'game--console', 'temperature--hot'];
 const dir = new URL('../node_modules/@carbon/icons/svg/32/', import.meta.url);
 const symbols = ICONS.map(name => {
   const svg = readFileSync(new URL(name + '.svg', dir), 'utf8');

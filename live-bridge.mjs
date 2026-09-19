@@ -22,6 +22,7 @@ const THOR_ADB = process.env.THOR_ADB_SCRIPT || '/code/projects/thor-infrastruct
 const FRAME_NAME = 'thorLive';
 import { createModes } from './modes.mjs';
 import { freezeHeadless, thawHeadless } from './headless.mjs';
+import { createHeatGuard } from './heat-guard.mjs';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 const MODE_FILE = process.env.LIVE_MODE_FILE || '/home/key/.cache/thor-viewer-mode';
 const MODE_LOG = process.env.LIVE_MODE_LOG || '/home/key/.cache/thor-viewer-modes.log';
@@ -102,6 +103,14 @@ export async function recoverAtStartup() {
   let last = ''; try { last = (await readFile(MODE_FILE, 'utf8')).trim(); } catch {}
   if (last === 'live' || last === 'borrowed') { try { await thawHeadless(); } catch {} writeFile(MODE_FILE, 'stream\n').catch(() => {}); }
 }
+// Heat guard: runs only while Live is on (started/stopped from the mode machine below).
+const logLine = line => { console.log(line); appendFile(MODE_LOG, line + '\n').catch(() => {}); };
+export const heat = createHeatGuard({
+  stateFile: process.env.LIVE_HEAT_FILE || '/home/key/.cache/thor-viewer-heat.json',
+  hold: Number(process.env.LIVE_HEAT_HOLD_MS) || undefined,
+  log: line => logLine(`${new Date().toISOString()} ${line}`),
+  onTrip: t => viewerGone(`Too hot (${Math.round(t)}°C), switched to Stream.`, { heat: true }),
+});
 export const modes = createModes({
   freezeHeadless: async () => (await shouldPauseHeadless()) ? freezeHeadless() : 0, thawHeadless,
   pauseLive: async until => {
@@ -120,7 +129,7 @@ export const modes = createModes({
       await S.cdp.send('Debugger.resume', {}, sess); await S.cdp.send('Debugger.disable', {}, sess);
     }
   },
-  onChange: snap => { pings(snap.mode !== 'stream'); emit({ type: 'mode', ...snap }); writeFile(MODE_FILE, snap.mode + '\n').catch(() => {}); },
+  onChange: snap => { pings(snap.mode !== 'stream'); snap.mode === 'stream' ? heat.stop() : heat.start(); emit({ type: 'mode', ...snap }); writeFile(MODE_FILE, snap.mode + '\n').catch(() => {}); },
   log: line => { console.log(line); appendFile(MODE_LOG, line + '\n').catch(() => {}); },
 });
 const attached = () => !!S.cdp;
@@ -257,8 +266,8 @@ export function stop(removeForward = true) {
 }
 // The viewer page is gone (navigated, reloaded, closed): detach now and end its event streams, which
 // can outlive the page on Android. A viewer that comes back in Live mode starts over.
-function viewerGone(why) {
-  emit({ type: 'fallback', reason: why });              // the viewer goes back to Stream and says why
+function viewerGone(why, extra = {}) {
+  emit({ type: 'fallback', reason: why, ...extra });              // the viewer goes back to Stream and says why
   stop();
   for (const res of S.clients) { try { res.end(); } catch {} }
   S.clients.clear();
@@ -304,6 +313,12 @@ export async function handle(req, res, path, readBody) {
       res.end(Object.entries(m).map(([k, v]) => `${k}=${v ?? ''}`).join('\n') + '\n'); return true;
     }
     json(200, m); return true;
+  }
+  if (path === '/api/heat' && req.method === 'GET') { json(200, heat.state()); return true; }
+  if (path === '/api/heat' && req.method === 'POST') {
+    if (!/^application\/json/.test(req.headers['content-type'] || '')) { json(415, { ok: false }); return true; }
+    let b = {}; try { b = JSON.parse(await readBody() || '{}'); } catch {}
+    json(200, heat.override(b.off ? (Number(b.ms) || undefined) : 0)); return true;
   }
   if (!path.startsWith('/api/live/') && !path.startsWith('/api/mode/')) return false;
   const op = path.startsWith('/api/mode/') ? 'mode-' + path.slice(10) : path.slice(10);
