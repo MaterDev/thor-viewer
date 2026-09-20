@@ -354,6 +354,12 @@ export async function handle(req, res, path, readBody) {
   }
   if (op === 'stop') { stop(); json(200, await modes.leaveLive('viewer switched to Stream')); return true; }
   if (op === 'nav' && NAV_JS[body.op]) { json(200, await evalInFrame(NAV_JS[body.op])); return true; }
+  // Key's calibrated controller in Live: the live page is cross-origin, so the viewer cannot scroll it directly
+  // and has to ask the frame to scroll itself. Discrete steps only — a real input path is the control-system work.
+  if (op === 'scroll') {
+    const n = v => Math.max(-20000, Math.min(20000, Math.round(Number(v) || 0)));
+    json(200, await evalInFrame(`window.scrollBy(${n(body.dx)}, ${n(body.dy)})`)); return true;
+  }
   if (op === 'open' && /^https?:\/\/\S+$/.test(body.url || '')) {  // the viewer opens it in its frame (it owns the tabs)
     if (!S.clients.size) { json(409, { ok: false, reason: 'no viewer in Live mode' }); return true; }
     emit({ type: 'open', url: body.url }); json(200, { ok: true }); return true;

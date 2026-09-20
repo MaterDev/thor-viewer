@@ -433,6 +433,19 @@ try { const s = JSON.parse(localStorage.getItem('thorButtons') || 'null'); if (s
 let padTimer = null, prevButtons = [], rest = null, stillFor = 0, prevAx = null; // rest: axis values once the sticks have been still for 1s (a hat or trigger can rest at -1)
 const dead = v => Math.abs(v) < 0.2 ? 0 : v;
 const rel = (v, i) => { if (!rest) return 0; const r = rest[i] || 0; return Math.abs(r) > 0.9 ? 0 : dead(v - r); };
+// Live scrolling: gather what the controller asked for and send it at ~15Hz, so a held stick is a handful of
+// requests a second rather than one per frame. Nothing is sent when the controller is still.
+let liveDx = 0, liveDy = 0, liveFlush = 0;
+function liveScroll(dx, dy) {
+  liveDx += dx; liveDy += dy;
+  if (liveFlush) return;
+  liveFlush = setTimeout(() => {
+    liveFlush = 0;
+    const dx2 = Math.round(liveDx), dy2 = Math.round(liveDy); liveDx = liveDy = 0;
+    if (dx2 || dy2) api('/api/live/scroll', { dx: dx2, dy: dy2 });
+  }, 66);
+}
+
 function pollPads() {
   const pad = [...(navigator.getGamepads?.() || [])].find(p => p && p.connected);
   if (!pad) return;
@@ -442,9 +455,17 @@ function pollPads() {
   const edge = i => b[i] && !prevButtons[i];
   const lx = rel(ax[0] || 0, 0), ly = rel(ax[1] || 0, 1), rx = rel(ax[2] || 0, 2), ry = rel(ax[3] || 0, 3);
   if (mode === 'live') {
+    // Key calibrated these once and they must mean the same thing in both modes. The live page is cross-origin,
+    // so scrolling goes through the bridge, which asks the frame to scroll itself; the stick is accumulated and
+    // flushed on a timer instead of posting every frame. Cursor and tap are not here: synthesising a tap into
+    // someone else's page needs a real input path, which is the control-system design, not this patch.
+    if (lx || ly) liveScroll(lx * 40, ly * 40);
+    if (b[DPAD.up]) liveScroll(0, -60); if (b[DPAD.down]) liveScroll(0, 60);
+    if (b[DPAD.left]) liveScroll(-60, 0); if (b[DPAD.right]) liveScroll(60, 0);
+    if (edge(BIND.pageup)) liveScroll(0, -(innerHeight - 80)); if (edge(BIND.pagedown)) liveScroll(0, innerHeight - 80);
     if (edge(BIND.back)) nav.go('back');
     if (edge(BIND.address)) toggleUrlBar(); if (edge(BIND.tabs)) toggleDrawer();
-  if (edge(BIND.chrome)) toggleChrome();                 // one button clears every interface, here and in the app
+    if (edge(BIND.chrome)) toggleChrome();               // one button clears every interface, here and in the app
     prevButtons = b; return;
   }
   if (lx || ly) scrollBy(lx * 24, ly * 24);
