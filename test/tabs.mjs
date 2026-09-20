@@ -25,7 +25,7 @@ const P = u => `http://127.0.0.1:${page.address().port}${u}`;
 
 const srv = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, PORT: '4851', HEADLESS_AB_ARGS: SESS.join(' '),
   LIVE_CDP: 'http://127.0.0.1:9', LIVE_NOTIFY: '0', LIVE_MODE_FILE: join(tmp, 'mode'), LIVE_MODE_LOG: join(tmp, 'modes.log'), LIVE_HEAT_FILE: join(tmp, 'heat.json'),
-  THOR_TABS_FILE: join(tmp, 'tabs.json'), THOR_PINS_FILE: join(tmp, 'pins.json'), THOR_THEME_FILE: join(tmp, 'theme') } });
+  THOR_TABS_FILE: join(tmp, 'tabs.json'), THOR_PINS_FILE: join(tmp, 'pins.json'), THOR_THEME_FILE: join(tmp, 'theme'), THOR_APP_STATE_FILE: join(tmp, 'app-state.json') } });
 let browser;
 try {
   await until(() => fetch(V + '/').then(r => r.ok, () => false));

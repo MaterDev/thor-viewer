@@ -1,27 +1,40 @@
 // Thor Viewer: full-screen live view of the agent-browser "thor" session.
 // Connects straight to agent-browser's stream (JPEG frames + input injection);
 // tabs, navigation and page errors go through the small server API.
-// ---------- theme (applied first): Standard = frosted glass (default); Solid = same palette, opaque, no blur.
-// A theme is a token swap: <html data-theme="solid"> overrides the glass tokens in app.css. ?theme= overrides
-// for testing (not persisted); the Settings choice persists in localStorage.
-const THEMES = ['standard', 'solid'];
-function currentTheme() { return document.documentElement.dataset.theme || 'standard'; }
-// ONE choice drives the viewer shell and the hosted page (Theme contract, CLAUDE.md): it's stored on the
-// server, which applies it to the hosted page (Live: CDP into the frame; Stream: the headless page).
-// localStorage is only a first-paint cache; ?theme= overrides this viewer locally (not saved).
-function setTheme(t, persist) {
-  if (!THEMES.includes(t)) return;
-  if (t === 'standard') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
-  try { localStorage.setItem('thorTheme', t); } catch {}
-  if (persist) fetch('/api/theme', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ theme: t }) }).catch(() => {});
+// ---------- the app contract (applied first): one channel from the viewer to the hosted page ----------
+// The viewer holds a small state object; each key becomes <html data-KEY> here and in the hosted page, which
+// also gets a `thor:state` event. Today: `theme` (standard | solid) and `chrome` (shown | hidden = hide the
+// interface, on both layers). Adding a setting later means adding a key, not new plumbing.
+// ?theme= / ?chrome= override locally for testing (not saved); localStorage is only a first-paint cache.
+const SETTINGS = { theme: { values: ['standard', 'solid'], default: 'standard' }, chrome: { values: ['shown', 'hidden'], default: 'shown' } };
+const state = { theme: 'standard', chrome: 'shown' };
+const currentTheme = () => state.theme;
+const uiHidden = () => state.chrome === 'hidden';
+function applyLocally(k, v) {
+  if (v === SETTINGS[k].default) delete document.documentElement.dataset[k]; else document.documentElement.dataset[k] = v;
+  // (closeDrawer/closeUrlBar are defined further down: at first paint they don't exist yet)
+  if (k === 'chrome') { document.body.classList.toggle('ui-hidden', v === 'hidden'); if (v === 'hidden') { try { closeDrawer(); closeUrlBar(); } catch {} } }
 }
-const themeParam = (() => { try { return new URLSearchParams(location.search).get('theme'); } catch { return null; } })();
-{ let t = themeParam; try { t = t || localStorage.getItem('thorTheme'); } catch {} if (t) setTheme(t, false); }
-if (!themeParam) fetch('/api/theme').then(r => r.json()).then(r => { if (r.theme !== currentTheme()) setTheme(r.theme, false); }).catch(() => {});
+function setSetting(k, v, persist = true) {
+  if (!SETTINGS[k] || !SETTINGS[k].values.includes(v) || state[k] === v) return;
+  state[k] = v; applyLocally(k, v);
+  try { localStorage.setItem('thor' + k[0].toUpperCase() + k.slice(1), v); } catch {}
+  if (persist) fetch('/api/app', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [k]: v }) }).catch(() => {});
+}
+const setTheme = (t, persist) => setSetting('theme', t, persist !== false);
+const toggleChrome = () => setSetting('chrome', uiHidden() ? 'shown' : 'hidden');
+const params = (() => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(); } })();
+for (const k of Object.keys(SETTINGS)) {                       // first paint: URL, then the last known value
+  let v = params.get(k);
+  if (!v) { try { v = localStorage.getItem('thor' + k[0].toUpperCase() + k.slice(1)); } catch {} }
+  if (v && SETTINGS[k].values.includes(v)) { state[k] = v; applyLocally(k, v); }
+}
+if (![...Object.keys(SETTINGS)].some(k => params.get(k)))      // then the server's copy, which is the truth
+  fetch('/api/app').then(r => r.json()).then(r => { for (const [k, v] of Object.entries(r.state || {})) if (state[k] !== v) setSetting(k, v, false); }).catch(() => {});
 let themeApplyTimer = 0;
 function applyThemeToPage() {                        // after a Stream navigation (Live re-applies server-side);
-  clearTimeout(themeApplyTimer);                      // the server holds the choice and skips Standard (nothing to undo on a fresh page)
-  themeApplyTimer = setTimeout(() => fetch('/api/theme/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 400);
+  clearTimeout(themeApplyTimer);                      // the server holds the state and skips keys already at their default
+  themeApplyTimer = setTimeout(() => fetch('/api/app/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 400);
 }
 
 const STREAM = 'ws://127.0.0.1:9223/?pacing=ack&maxFps=60';
@@ -233,6 +246,7 @@ const openDrawer = async () => {
 const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
 const toggleDrawer = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 $('tabsBtn').onclick = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
+$('peek').onclick = () => setSetting('chrome', 'shown');
 scrim.onclick = closeDrawer;
 $('tabNew').onclick = () => { nav.tabNew(); if (isLive()) { closeDrawer(); openUrlBar(); } };
 // Pinned tabs (public/pins.js): kept on the server, shown first with a filled pin; agents leave them alone.
@@ -264,7 +278,7 @@ function renderTabs() {
     body.append(title, u);
     body.onclick = async () => { await nav.tabSwitch(t.id); closeDrawer(); };
     // Closing takes two taps: the × turns into "close?" with a confirm (trash) and a cancel, and reverts after 4s.
-    const x = document.createElement('button'); x.className = 'ib'; x.title = 'Close tab';
+    const x = document.createElement('button'); x.className = 'ib close'; x.title = 'Close tab';
     x.innerHTML = '<svg><use href="icons.svg#close"/></svg>';
     const ask = document.createElement('span'); ask.className = 'ask hidden';
     ask.innerHTML = '<span class="q">close?</span><button class="ib yes" title="Close tab"><svg><use href="icons.svg#trash-can"/></svg></button><button class="ib no" title="Keep"><svg><use href="icons.svg#close"/></svg></button>';
@@ -289,7 +303,10 @@ $('settingsClose').onclick = () => $('settings').classList.add('hidden');
 function buildSettings() {
   const body = $('settingsBody');
   if (body.childElementCount) { markTheme(); return; }
-  body.innerHTML = '<h3>Theme</h3><div class="crow" role="radiogroup" aria-label="Theme"></div><p class="note">Standard is frosted glass. Solid uses the same muted colours with opaque surfaces and no blur (lighter on the GPU).</p>';
+  body.innerHTML = '<h3>Theme</h3><div class="crow" role="radiogroup" aria-label="Theme"></div><p class="note">Standard is frosted glass. Solid uses the same muted colours with opaque surfaces and no blur (lighter on the GPU).</p>'
+    + '<h3>Interface</h3><div class="crow"><button class="btn" id="chromeBtn">Hide the interface</button></div>'
+    + '<p class="note">Hides the viewer\u2019s controls and asks the app inside to hide its own. A faint button in the top-right brings everything back; the controller button bound to HIDE / SHOW does the same.</p>';
+  body.querySelector('#chromeBtn').onclick = () => { toggleChrome(); $('settings').classList.add('hidden'); };
   for (const [id, label] of [['standard', 'Standard'], ['solid', 'Solid']]) {
     const b = document.createElement('button'); b.className = 'btn'; b.dataset.theme = id; b.textContent = label; b.setAttribute('role', 'radio');
     b.onclick = () => { setTheme(id, true); markTheme(); };
@@ -391,7 +408,7 @@ function showCursor() { cursor.visible = true; clearTimeout(cursor.timer); curso
 function moveCursor(dx, dy) { cursor.x = Math.max(0, Math.min(fw - 1, cursor.x + dx)); cursor.y = Math.max(0, Math.min(fh - 1, cursor.y + dy)); showCursor(); draw(); }
 // AYN Thor pad is a non-standard "Odin Controller"; button indices vary and some are phantom/sticky,
 // so the action->button map is learned by in-app calibration and saved. D-pad and sticks are stable.
-const DEFAULT_BIND = { tap: 1, back: 2, tabs: 3, address: 4, pageup: 5, pagedown: 6 };
+const DEFAULT_BIND = { tap: 1, back: 2, tabs: 3, address: 4, pageup: 5, pagedown: 6, chrome: 7 };   // chrome = hide/show all interface
 const DPAD = { up: 12, down: 13, left: 14, right: 15 };
 let BIND = { ...DEFAULT_BIND };
 try { const s = JSON.parse(localStorage.getItem('thorButtons') || 'null'); if (s) BIND = { ...DEFAULT_BIND, ...s }; } catch {}
@@ -409,6 +426,7 @@ function pollPads() {
   if (mode === 'live') {
     if (edge(BIND.back)) nav.go('back');
     if (edge(BIND.address)) toggleUrlBar(); if (edge(BIND.tabs)) toggleDrawer();
+  if (edge(BIND.chrome)) toggleChrome();                 // one button clears every interface, here and in the app
     prevButtons = b; return;
   }
   if (lx || ly) scrollBy(lx * 24, ly * 24);
@@ -418,6 +436,7 @@ function pollPads() {
   if (edge(BIND.back)) api('/api/nav/back');
   if (edge(BIND.pageup)) scrollBy(0, -(fh - 80)); if (edge(BIND.pagedown)) scrollBy(0, fh - 80);
   if (edge(BIND.address)) toggleUrlBar(); if (edge(BIND.tabs)) toggleDrawer();
+  if (edge(BIND.chrome)) toggleChrome();                 // one button clears every interface, here and in the app
   const pressed = b.map((v, i) => v ? i : -1).filter(i => i >= 0);
   const moved = ax.some((v, i) => Math.abs(v - (rest?.[i] ?? 0)) > 0.2);
   if (pressed.length || moved) logInput({ type: 'gamepad', id: pad.id, mapping: pad.mapping, pressed, axes: ax.slice(0, 8), rest: rest?.slice(0, 8) });
@@ -444,6 +463,7 @@ addEventListener('keydown', e => {                          // D-pad and buttons
 const CALIB_STEPS = [
   ['tap', 'TAP  (usually A)'], ['back', 'BACK  (usually B)'], ['tabs', 'OPEN TABS'],
   ['address', 'ADDRESS BAR'], ['pageup', 'PAGE UP  (a shoulder button)'], ['pagedown', 'PAGE DOWN  (a shoulder button)'],
+  ['chrome', 'HIDE / SHOW THE INTERFACE'],
 ];
 const calib = { active: false, step: 0, baseline: new Set(), used: new Set(), prev: new Set(), result: {}, settleUntil: 0 };
 function startCalibration() {

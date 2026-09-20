@@ -214,9 +214,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
   border: 1px solid var(--glass-edge); box-shadow: var(--glass-specular), var(--glass-shadow); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   font: 600 11px var(--sans); font-variant-numeric: tabular-nums; color: var(--ink); text-shadow: var(--halo); white-space: nowrap; }
 #temps:empty, #temps.hidden { display: none; }
-#tempWrap { position: relative; align-self: flex-start; display: flex; }
+#tempWrap { position: relative; align-self: flex-start; display: flex; flex: 0 0 auto; }
+#temps { flex: 0 0 auto; min-width: max-content; gap: 4px; padding: 0 6px; }   /* size to the four readings; never clip one */
 #temps { cursor: pointer; position: relative; }
-#temps::before { content: ''; position: absolute; inset: -13px -4px; }   /* ≥48px tap area around the thin pill */
+#temps::before { content: ''; position: absolute; inset: -13px 0; }   /* ≥48px tall tap area; no horizontal spread (that counted as overflow and clipped a reading) */
 #tempMenu { position: absolute; top: 34px; left: 50%; transform: translateX(-50%); z-index: 30; min-width: 340px; padding: 4px;
   border-radius: var(--radius-pane); background: var(--glass-sheen), linear-gradient(var(--glass-tint), var(--glass-tint)), linear-gradient(var(--glass-scrim), var(--glass-scrim));
   border: 1px solid var(--glass-edge); box-shadow: var(--glass-specular), var(--glass-shadow); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
@@ -236,3 +237,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; o
   #modeSlot { left: 56px; right: 96px; transform: none; justify-content: center; flex-wrap: wrap; }   /* the space between the drawer button and the address+refresh pair */
   #modeSlot #stats { margin-top: 2px; }   /* wraps to its own line under the group */
 }
+
+/* ---------- the app contract: chrome=hidden hides every control, here and in the hosted app ---------- */
+/* One faint button remains, so there is always a way back. Nothing is removed from the DOM: the state is
+   temporary and a rebuild would cost more than it saves. */
+body.ui-hidden .ib.corner:not(#peek), body.ui-hidden #stats, body.ui-hidden #modeSlot, body.ui-hidden #urlwrap,
+body.ui-hidden #drawer, body.ui-hidden #scrim, body.ui-hidden #console, body.ui-hidden .panel, body.ui-hidden #badge { display: none !important; }
+#peek { display: none; right: max(6px, env(safe-area-inset-right)); opacity: .12; background: none; box-shadow: none; }
+body.ui-hidden #peek { display: inline-flex; }
+#peek:active, #peek:focus-visible { opacity: .9; }

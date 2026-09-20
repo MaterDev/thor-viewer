@@ -58,7 +58,7 @@ try {
   serve(process.execPath, ['server.mjs'], { PORT: String(VIEWER), LIVE_CDP: 'http://127.0.0.1:4856', LIVE_PAUSE_HEADLESS: 'always',
     LIVE_THERMAL_FILE: join(tmp, 'thermal'), LIVE_HEAT_HOLD_MS: '2000', LIVE_HEAT_FILE: join(tmp, 'heat.json'),
     HEADLESS_AB_ARGS: PARK.join(' '), LIVE_NOTIFY: '0', LIVE_MODE_FILE: join(tmp, 'mode'), LIVE_MODE_LOG: join(tmp, 'modes.log'),
-    THOR_TABS_FILE: join(tmp, 'tabs.json'), THOR_THEME_FILE: join(tmp, 'theme') });
+    THOR_TABS_FILE: join(tmp, 'tabs.json'), THOR_THEME_FILE: join(tmp, 'theme'), THOR_APP_STATE_FILE: join(tmp, 'app-state.json') });
   // Tabs are one shared list owned by the server: the (test) headless page shows the fixture, and Live starts on it.
   await ab([...PARK, 'open', `${F}/`]);
   // A ticking page in the headless session: rAF and timer counters, some scroll.

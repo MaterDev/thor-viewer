@@ -34,17 +34,28 @@ Normally started by `~/.claude/skills/agent-browser/start.sh`, which also starts
 - `public/app.css`: neutral glassmorphism (token names shared with thor-canvas-lab; the viewer's tint is faintly cool). Closed panes are `display:none` (an invisible backdrop-filter still costs GPU). Address and refresh form one joined pill top-right; `.top-pill` is the slot for the Stream/Live toggle at top centre. Carbon icons via `<use href="icons.svg#name">`. Icon names are the Carbon 32px file names (`arrow--left`, `trash-can`, ...).
 - `manifest.webmanifest` + `sw.js` + PNG icons (rendered from `icon.svg` with headless Chromium) make it installable from Chrome's "Add to Home screen".
 
-## Theme contract (for any app shown in the viewer)
+## App contract (for any app shown in the viewer)
 
-Settings -> Themes (drawer gear) is the ONE control for the viewer shell and the hosted page. Standard = frosted
-glass; Solid = a neutral ~63% gray (`#a0a0a0`), dark ink (7.2:1), opaque, no `backdrop-filter`.
-- Stored server-side (`GET/POST /api/theme`, file `~/.cache/thor-viewer-theme`); localStorage is only a
-  first-paint cache; `?theme=` on the viewer URL overrides locally.
-- Applied to the hosted page as `<html data-theme>` + a `thor:theme` window event (detail `{ theme }`): on
-  change, after every Stream navigation (`POST /api/theme/apply`, headless page via agent-browser with the
-  gate off) and on every new live-frame context in Live (`live-bridge` `onLiveContext`, over CDP).
-- An app honours the attribute, `?theme=` on first load and the event; pages without the contract are
-  unaffected. Canvas Lab implements it.
+ONE channel from the viewer to whatever app it is showing (Key, 2026-09-20: one pattern, any number of
+settings, rather than a new mechanism per feature). The viewer holds a small **state object**; each key is
+pushed into the hosted page as `<html data-KEY>` plus a single `thor:state` event carrying the whole state and
+which keys changed. `theme` is just a key. One-shot actions that are not state go out as `thor:command`.
+
+| Setting | Values | Meaning |
+|---|---|---|
+| `theme` | `standard` (default, frosted glass, no attribute) · `solid` | Same palette, opaque, no `backdrop-filter`. |
+| `chrome` | `shown` (default) · `hidden` | Hide the interface: the viewer hides its own controls **and the app hides its own**. One faint button (top-right, 12% opacity) brings it back, as does the controller button bound to HIDE / SHOW. |
+
+- State lives at `~/.local/state/thor-viewer/app-state.json` (`THOR_APP_STATE_FILE`); the old theme file is
+  migrated once. `GET /api/app` → `{state, settings}`; `POST /api/app {key: value}` changes and pushes;
+  `POST /api/app/apply` re-pushes after a navigation (keys at their default are skipped, since a fresh page
+  already matches); `POST /api/app/command {name, args}` fires `thor:command`. `/api/theme` remains as an alias.
+- Applied the same way in both modes: Live over CDP into the frame, Stream via agent-browser `eval` with the
+  gate off, and on every new live context.
+- **An app honours it** by reading `?theme=` / `?chrome=` on first load, reading `document.documentElement.dataset`
+  (the viewer may have set it before the app's script ran), and listening for `thor:state`. Pages without the
+  contract are unaffected. Canvas Lab implements it (`public/app.js`, top of file).
+- Adding a setting later = one entry in `SETTINGS` in `server.mjs` and in each app. No new endpoints.
 
 ## History and toggles
 

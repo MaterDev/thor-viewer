@@ -45,23 +45,64 @@ function runAgentBrowser(args) {
   return new Promise(resolve => execFile(AGENT_BROWSER, [...AB_ARGS, ...args], { timeout: 15000, ...AB_ENV }, err => resolve(!err)));
 }
 
-// ---------- theme: one choice for the viewer shell AND the hosted page (Theme contract, CLAUDE.md) ----------
-// Persisted server-side so every mode and page gets it. Applying = one small script in the hosted page that
-// sets <html data-theme> and dispatches a 'thor:theme' event; pages without the contract are unaffected.
-const THEME_FILE = process.env.THOR_THEME_FILE || '/home/key/.cache/thor-viewer-theme';
-const THEMES = ['standard', 'solid'];
-async function getTheme() { try { const t = (await readFile(THEME_FILE, 'utf8')).trim(); return THEMES.includes(t) ? t : 'standard'; } catch { return 'standard'; } }
-const themeJs = t => `(() => { const t = ${JSON.stringify(t)}; const go = () => { const r = document.documentElement; if (!r) return;
-  if (t === 'standard') delete r.dataset.theme; else r.dataset.theme = t;
-  window.dispatchEvent(new CustomEvent('thor:theme', { detail: { theme: t } })); };
-  go(); if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); return t; })()`;
-async function applyTheme(force = false) {
-  const t = await getTheme();
-  if (t === 'standard' && !force) return { ok: true, skipped: true };        // a fresh page is already standard
-  if (live.status().attached) return live.evalInFrame(themeJs(t));             // Live: over CDP into the live frame
-  return { ok: await runAgentBrowser(['eval', themeJs(t)]) };                    // Stream: the headless page (gate off)
+// ---------- the app contract: ONE channel from the viewer to whatever app it is showing ----------
+// (Key, 2026-09-20: "one pattern that can issue both, or any number of different commands, to our family of
+// apps".) The viewer holds a small state object; every key becomes a data-attribute on the hosted page's
+// <html>, and the page gets one `thor:state` event with the whole state and what changed. Theme is just a key.
+// One-shot actions that are not state go out as `thor:command`. Apps that don't implement it are unaffected.
+const STATE_FILE = process.env.THOR_APP_STATE_FILE || '/home/key/.local/state/thor-viewer/app-state.json';
+const OLD_THEME_FILE = process.env.THOR_THEME_FILE || '/home/key/.cache/thor-viewer-theme';
+const SETTINGS = {                              // key -> { values, default }: the whole contract, in one place
+  theme:  { values: ['standard', 'solid'], default: 'standard' },
+  chrome: { values: ['shown', 'hidden'], default: 'shown' },   // 'hidden' = app hides its own UI too
+};
+const DEFAULT_STATE = Object.fromEntries(Object.entries(SETTINGS).map(([k, v]) => [k, v.default]));
+let stateCache = null;
+async function getState() {
+  if (stateCache) return stateCache;
+  let s = {};
+  try { s = JSON.parse(await readFile(STATE_FILE, 'utf8')); } catch {
+    try { const t = (await readFile(OLD_THEME_FILE, 'utf8')).trim(); if (SETTINGS.theme.values.includes(t)) s = { theme: t }; } catch {}   // migrate the old theme file
+  }
+  stateCache = { ...DEFAULT_STATE, ...Object.fromEntries(Object.entries(s).filter(([k, v]) => SETTINGS[k]?.values.includes(v))) };
+  return stateCache;
 }
-live.onLiveContext(() => applyTheme().catch(() => {}));
+async function setState(patch) {
+  const cur = await getState(), next = { ...cur };
+  const changed = [];
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (!SETTINGS[k] || !SETTINGS[k].values.includes(v) || cur[k] === v) continue;
+    next[k] = v; changed.push(k);
+  }
+  if (changed.length) {
+    stateCache = next;
+    await mkdir(STATE_FILE.replace(/\/[^/]*$/, ''), { recursive: true }).catch(() => {});
+    await writeFile(STATE_FILE, JSON.stringify(next, null, 1));
+  }
+  return { state: next, changed };
+}
+// The script sent into the hosted page. Defaults are expressed as "no attribute", so a fresh page is correct.
+const stateJs = (state, changed) => `(() => { const s = ${JSON.stringify(state)}, c = ${JSON.stringify(changed)}, d = ${JSON.stringify(DEFAULT_STATE)};
+  const go = () => { const r = document.documentElement; if (!r) return;
+    for (const [k, v] of Object.entries(s)) { if (v === d[k]) delete r.dataset[k]; else r.dataset[k] = v; }
+    window.dispatchEvent(new CustomEvent('thor:state', { detail: { state: s, changed: c } }));
+    if (c.includes('theme')) window.dispatchEvent(new CustomEvent('thor:theme', { detail: { theme: s.theme } })); };
+  go(); if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); return s; })()`;
+const commandJs = (name, args) => `(() => { window.dispatchEvent(new CustomEvent('thor:command', { detail: { name: ${JSON.stringify(name)}, args: ${JSON.stringify(args || {})} } })); return true; })()`;
+async function sendToPage(js) {
+  if (live.status().attached) return live.evalInFrame(js);                    // Live: over CDP into the live frame
+  return { ok: await runAgentBrowser(['eval', js]) };                          // Stream: the headless page (gate off)
+}
+async function applyState(force = false, changed = null) {
+  const state = await getState();
+  const keys = changed || Object.keys(state).filter(k => state[k] !== DEFAULT_STATE[k]);
+  if (!keys.length && !force) return { ok: true, skipped: true };              // a fresh page already matches the defaults
+  return sendToPage(stateJs(state, keys));
+}
+// kept so older callers and tests keep working
+async function getTheme() { return (await getState()).theme; }
+async function applyTheme(force = false) { return applyState(force); }
+live.onLiveContext(() => applyState().catch(() => {}));
 
 // the shared tab list: { tabs: [{ id, url, title }], active, next }, persisted so every mode and reload gets it
 const TABS_FILE = process.env.THOR_TABS_FILE || '/home/key/.cache/thor-viewer-tabs.json';
@@ -219,13 +260,33 @@ async function readTemp() {
 createServer(async (req, res) => {
   let path = new URL(req.url, 'http://x').pathname;
   if (await live.handle(req, res, path, async () => { let b = ''; for await (const c of req) b += c; return b; })) return;
-  if (path === '/api/theme' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' }); return res.end(JSON.stringify({ theme: await getTheme() })); }
-  if ((path === '/api/theme' || path === '/api/theme/apply') && req.method === 'POST') {
+  // ---------- the app contract ----------
+  // GET  /api/app                 -> { state, settings }
+  // POST /api/app   {theme,chrome}-> merge, persist, push to the page
+  // POST /api/app/apply           -> re-push after a navigation (skips keys already at their default)
+  // POST /api/app/command {name}  -> a one-shot `thor:command` in the page (not state)
+  // /api/theme is kept as a thin alias so older callers keep working.
+  if ((path === '/api/app' || path === '/api/theme') && req.method === 'GET') {
+    const state = await getState();
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+    return res.end(JSON.stringify(path === '/api/theme' ? { theme: state.theme } : { state, settings: SETTINGS }));
+  }
+  if (/^\/api\/(app|theme)(\/(apply|command))?$/.test(path) && req.method === 'POST') {
     if (!/^application\/json/.test(req.headers['content-type'] || '')) { res.writeHead(415); return res.end(); }
     let body = ''; for await (const c of req) body += c;
-    if (path === '/api/theme') { const { theme } = JSON.parse(body || '{}'); if (!THEMES.includes(theme)) { res.writeHead(400); return res.end(); } await writeFile(THEME_FILE, theme + '\n'); }
-    const r = await applyTheme(path === '/api/theme');                          // a change always applies; a navigation skips standard
-    res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ theme: await getTheme(), applied: !!(r && r.ok) }));
+    let p = {}; try { p = JSON.parse(body || '{}'); } catch {}
+    if (path === '/api/app/command') {
+      if (!p.name) { res.writeHead(400); return res.end(JSON.stringify({ ok: false, reason: 'need a command name' })); }
+      const r = await sendToPage(commandJs(String(p.name), p.args));
+      res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: !!(r && r.ok) }));
+    }
+    const patch = path === '/api/theme' ? { theme: p.theme } : p;
+    const isChange = path === '/api/app' || path === '/api/theme';
+    if (isChange && !Object.entries(patch).some(([k, v]) => SETTINGS[k]?.values.includes(v))) { res.writeHead(400); return res.end(); }
+    const { state, changed } = isChange ? await setState(patch) : { state: await getState(), changed: null };
+    const r = await applyState(isChange, isChange ? changed : null);           // a change always applies; a navigation skips defaults
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(path === '/api/theme' ? { theme: state.theme, applied: !!(r && r.ok) } : { state, changed, applied: !!(r && r.ok) }));
   }
   if (path === '/api/temp') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });

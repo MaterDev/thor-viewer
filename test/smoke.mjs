@@ -118,7 +118,8 @@ try {
   await page.evaluate(() => document.getElementById('tabNew').click());
   const after = await until(() => page.evaluate(n => { const c = document.querySelectorAll('#tabList li:not(.empty)').length; return c > n ? c : 0; }, before), 8000);
   check('new tab appears in the drawer', after === before + 1, `${after} tab(s)`);
-  await page.evaluate(() => { const li = document.querySelector('#tabList li:not(.active)') || document.querySelector('#tabList li'); li.querySelector('button.ib:not(.yes):not(.no)').click(); });
+  // a pinned tab has no close button, so pick an unpinned one
+  await page.evaluate(() => { const li = document.querySelector('#tabList li:not(.active):not(.pinned)') || document.querySelector('#tabList li:not(.pinned)'); li.querySelector('button.ib.close').click(); });
   check('closing a tab asks for confirmation first', await page.evaluate(() => !!document.querySelector('#tabList li.arming')));
   await page.evaluate(() => document.querySelector('#tabList li.arming .yes').click());
   const closed = await until(() => page.evaluate(n => document.querySelectorAll('#tabList li:not(.empty)').length === n ? 1 : 0, before), 8000);
