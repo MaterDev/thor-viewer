@@ -36,6 +36,11 @@ if (!viewerUp) { console.log('FAIL  viewer not running at ' + VIEWER + ' (run ~/
 const originalUrl = await ab('get', 'url');
 if (!originalUrl) { console.log('FAIL  agent-browser session not reachable (run ~/.claude/skills/agent-browser/start.sh)'); process.exit(1); }
 
+// The suite runs against Key's real "thor" session, so it must leave the drawer exactly as it found it.
+// The close test picks whichever unpinned tab is to hand, which is not always the one the new-tab test made,
+// so snapshot the tabs now and close anything extra at the end instead of trusting the tests to balance out.
+const tabsBefore = new Set((await fetch(VIEWER + 'api/tabs').then(r => r.json()).catch(() => [])).map(t => t.targetId));
+
 const server = createServer((_, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(PAGE); });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const testUrl = `http://127.0.0.1:${server.address().port}/`;
@@ -173,6 +178,12 @@ try {
   await browser.close().catch(() => {});
   server.close();
   if (originalUrl && !originalUrl.startsWith('about:')) await ab('open', originalUrl);
+  // Close every tab this run added, never a pinned one and never one that was already there.
+  const pinned = new Set((await fetch(VIEWER + 'api/pins').then(r => r.json()).catch(() => [])).map(p => String(p.id).replace(/^S/, '')));
+  const now = await fetch(VIEWER + 'api/tabs').then(r => r.json()).catch(() => []);
+  const extra = now.filter(t => !tabsBefore.has(t.targetId) && !pinned.has(String(t.id).replace(/^S/, '')));
+  for (const t of extra) await fetch(VIEWER + 'api/tabs/close', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: t.id }) }).catch(() => {});
+  if (extra.length) console.log(`cleanup: closed ${extra.length} tab(s) this run opened`);
 }
 const failed = results.filter(r => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
