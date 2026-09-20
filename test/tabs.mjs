@@ -69,6 +69,17 @@ try {
   const closed = await until(async () => (await ab([...SESS, 'tab', 'list'])).includes('/gone') ? null : true, 12000);
   check('live: closing a tab closes the headless page behind it', !!doomed && closed === true, await ab([...SESS, 'tab', 'list']));
 
+  // 5b. Live reads the tab list once when it enters, so a tab an agent adds afterwards used to be invisible
+  // until Key restarted the app. refresh() re-reads it, keeps the tab he is looking at, and shows the new one.
+  const mine = (await get('/api/shared-tabs?raw')).active;
+  await post('/api/tabs/new', { url: P('/added-by-agent') });          // exactly what Claude does while Key is in Live
+  const seen = await until(async () => {
+    await pg.evaluate(() => window.__live.refresh());
+    return pg.evaluate(() => (window.__tabs || []).some(t => t.url.endsWith('/added-by-agent')) ? 1 : 0);
+  }, 12000);
+  check('live: a tab added on the server appears without re-entering Live', !!seen, await pg.evaluate(() => (window.__tabs || []).map(t => t.url)));
+  check('live: refresh keeps the tab Key is looking at active', await pg.evaluate(() => (window.__tabs || []).find(t => t.active)?.id) === mine, mine);
+
   // 6. leaving Live syncs the headless tabs to the shared list (extras closed, missing opened)
   await ab([...SESS, 'tab', 'new', P('/stray')]);                      // something Live never knew about
   await pg.evaluate(() => window.__live.exit());

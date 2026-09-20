@@ -93,6 +93,21 @@ export function create(shell) {
       publishTabs(); show(activeTab()?.url || '');
       attach(); shell.pollTemp();
     },
+    // The server owns the tab list and an agent can change it while Live is running, so re-read it on demand
+    // (when the drawer opens, and while it stays open). Keep showing whatever Key is looking at: his own active
+    // tab wins over the server's, and the frame only moves if his tab is no longer in the list.
+    async refresh() {
+      if (!on) return false;
+      let s; try { s = await (await fetch('/api/shared-tabs', { cache: 'no-store' })).json(); } catch { return false; }
+      if (!s || !Array.isArray(s.tabs)) return false;
+      const before = JSON.stringify(state.tabs), mine = activeTab();
+      state = s;
+      const kept = mine && state.tabs.some(t => t.id === mine.id);
+      if (kept) state.active = mine.id;
+      publishTabs();
+      if (mine && !kept) show(activeTab()?.url || '');
+      return JSON.stringify(state.tabs) !== before;
+    },
     exit() {
       on = false;
       events?.close(); events = null;

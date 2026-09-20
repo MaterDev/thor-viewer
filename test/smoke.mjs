@@ -134,8 +134,16 @@ try {
   await page.evaluate(() => document.querySelector('#tabList li.arming .yes').click());
   const closed = await until(() => page.evaluate(n => document.querySelectorAll('#tabList li:not(.empty)').length === n ? 1 : 0, before), 8000);
   check('confirmed close removes the tab', !!closed, `${await page.evaluate(() => document.querySelectorAll('#tabList li:not(.empty)').length)} tab(s)`);
+  // A tab opened elsewhere (an agent, or Claude) has to show up in a drawer that is already open: Key should
+  // never have to restart the viewer to see the current list.
+  const nBefore = await page.evaluate(() => document.querySelectorAll('#tabList li:not(.empty)').length);
+  await fetch(VIEWER + 'api/tabs/new', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: testUrl + '?agent=1' }) });
+  const appeared = await until(() => page.evaluate(n => document.querySelectorAll('#tabList li:not(.empty)').length > n ? 1 : 0, nBefore), 12000);
+  check('a tab opened elsewhere appears in the open drawer, no restart', !!appeared, `${await page.evaluate(() => document.querySelectorAll('#tabList li:not(.empty)').length)} tab(s)`);
+
   await page.evaluate(() => document.getElementById('scrim').click());
   check('tapping outside closes the drawer', await page.evaluate(() => !drawer.classList.contains('open')));
+  check('closed drawer stops polling', await page.evaluate(() => !document.querySelector('#tabList')?.dataset.polling));
 
   // Size guards
   const remoteBefore = await abEval(`innerWidth+'x'+innerHeight`);

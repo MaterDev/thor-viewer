@@ -235,15 +235,32 @@ function setTabs(list) {
 const titles = new Map(); let titlesBusy = false;
 async function loadTitles() {
   if (isLive() || titlesBusy) return; titlesBusy = true;
-  try { for (const t of await (await fetch('/api/tabs', { cache: 'no-store' })).json()) if (t.title) titles.set(String(t.id), t.title); } catch {}
-  titlesBusy = false; if (drawer.classList.contains('open')) renderTabs();
+  let changed = false;
+  try { for (const t of await (await fetch('/api/tabs', { cache: 'no-store' })).json()) if (t.title && titles.get(String(t.id)) !== t.title) { titles.set(String(t.id), t.title); changed = true; } } catch {}
+  titlesBusy = false; if (changed && drawer.classList.contains('open')) renderTabs();
 }
 const tabTitle = t => (!isLive() && titles.get(String(t.id))) || t.title || t.url || t.id;
+// The drawer has to show what is open right now: an agent can add or close a tab, or change a pin, while the
+// viewer is running, and in Live the page had read the list only once when it entered — so a change was invisible
+// until Key restarted the app. Refresh when the drawer opens and every 2s while it stays open. Nothing runs while
+// it is closed, and each loader redraws only on a real change, so an idle drawer still doesn't flicker.
+async function refreshDrawer() {
+  loadPins();
+  if (isLive()) { await live?.refresh?.(); return; }
+  try { setTabs(await (await fetch('/api/tabs', { cache: 'no-store' })).json()); } catch {}
+  loadTitles();
+}
+let drawerPoll = 0;
 const openDrawer = async () => {
-  drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs(); loadPins(); loadTitles();
-  if (!tabs.length && !isLive()) { try { setTabs(await (await fetch('/api/tabs')).json()); } catch {} } // before the first stream update
+  drawer.classList.add('open'); scrim.classList.remove('hidden'); renderTabs();
+  await refreshDrawer();
+  clearInterval(drawerPoll); drawerPoll = setInterval(refreshDrawer, 2000);
+  $('tabList').dataset.polling = '1';
 };
-const closeDrawer = () => { drawer.classList.remove('open'); scrim.classList.add('hidden'); };
+const closeDrawer = () => {
+  clearInterval(drawerPoll); drawerPoll = 0; delete $('tabList').dataset.polling;
+  drawer.classList.remove('open'); scrim.classList.add('hidden');
+};
 const toggleDrawer = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 $('tabsBtn').onclick = () => drawer.classList.contains('open') ? closeDrawer() : openDrawer();
 $('peek').onclick = () => setSetting('chrome', 'shown');
@@ -253,11 +270,12 @@ $('tabNew').onclick = () => { nav.tabNew(); if (isLive()) { closeDrawer(); openU
 // The module and the pin list load on the first drawer open; a pin tap saves and redraws.
 let pins = null, applyPins = null;
 async function loadPins() {
+  const before = JSON.stringify(pins);
   try {
     if (!applyPins) applyPins = (await import('./pins.js')).applyPins;
     pins = await (await fetch('/api/pins', { cache: 'no-store' })).json();
   } catch { pins = pins || []; }
-  if (drawer.classList.contains('open')) renderTabs();
+  if (drawer.classList.contains('open') && JSON.stringify(pins) !== before) renderTabs();
 }
 async function togglePin(t) {
   const r = await fetch('/api/pins', { method: 'POST', headers: { 'content-type': 'application/json' },
