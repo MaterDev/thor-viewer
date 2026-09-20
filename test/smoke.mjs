@@ -120,11 +120,16 @@ try {
   let redraws = 0; await page.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.getElementById('tabList'), { childList: true }); });
   await sleep(2500); redraws = await page.evaluate(() => window.__redraws);
   check('tab list does not flicker while idle', redraws === 0, `${redraws} redraws in 2.5s`);
+  const idsBefore = await page.evaluate(() => [...document.querySelectorAll('#tabList li[data-tab-id]')].map(li => li.dataset.tabId));
   await page.evaluate(() => document.getElementById('tabNew').click());
   const after = await until(() => page.evaluate(n => { const c = document.querySelectorAll('#tabList li:not(.empty)').length; return c > n ? c : 0; }, before), 8000);
   check('new tab appears in the drawer', after === before + 1, `${after} tab(s)`);
-  // a pinned tab has no close button, so pick an unpinned one
-  await page.evaluate(() => { const li = document.querySelector('#tabList li:not(.active):not(.pinned)') || document.querySelector('#tabList li:not(.pinned)'); li.querySelector('button.ib.close').click(); });
+  // Close the tab this test just made, never one of Key's: with a single tab open, "any unpinned tab" was his.
+  const armed = await page.evaluate(ids => {
+    const li = [...document.querySelectorAll('#tabList li[data-tab-id]')].find(li => !ids.includes(li.dataset.tabId) && !li.classList.contains('pinned'));
+    if (!li) return false; li.querySelector('button.ib.close').click(); return true;
+  }, idsBefore);
+  check('the new tab is the one offered for closing', armed);
   check('closing a tab asks for confirmation first', await page.evaluate(() => !!document.querySelector('#tabList li.arming')));
   await page.evaluate(() => document.querySelector('#tabList li.arming .yes').click());
   const closed = await until(() => page.evaluate(n => document.querySelectorAll('#tabList li:not(.empty)').length === n ? 1 : 0, before), 8000);

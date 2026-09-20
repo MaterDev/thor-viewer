@@ -271,7 +271,7 @@ function renderTabs() {
   if (!tabs.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'no tabs'; list.appendChild(li); return; }
   const shown = applyPins && pins ? applyPins(pins, tabs).order : tabs;
   for (const t of shown) {
-    const li = document.createElement('li'); if (t.active) li.classList.add('active'); if (t.pinned) li.classList.add('pinned');
+    const li = document.createElement('li'); li.dataset.tabId = t.id; if (t.active) li.classList.add('active'); if (t.pinned) li.classList.add('pinned');
     const body = document.createElement('div'); body.className = 't';
     const title = document.createElement('span'); title.className = 'title'; title.textContent = tabTitle(t);
     const u = document.createElement('span'); u.className = 'u'; u.textContent = t.url || '';
