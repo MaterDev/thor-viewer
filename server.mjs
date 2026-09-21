@@ -115,7 +115,11 @@ function cleanShared(s) {
     if (t.url) seen.add(t.url); tabs.push({ id: t.id, url: t.url, title: String(t.title || '').slice(0, 200) });
   }
   const active = tabs.some(t => t.id === s.active) ? s.active : tabs[tabs.length - 1]?.id || null;
-  return { tabs, active, next: Math.max(Number(s.next) || 1, tabs.length + 1) };
+  // `session` identifies the browser process these tabs belong to; it survives cleaning so a restart is
+  // distinguishable from Key closing tabs.
+  const out = { tabs, active, next: Math.max(Number(s.next) || 1, tabs.length + 1) };
+  if (typeof s.session === 'string' && s.session) out.session = s.session;
+  return out;
 }
 async function readShared() { try { return cleanShared(JSON.parse(await readFile(TABS_FILE, 'utf8'))) || { tabs: [], active: null, next: 1 }; } catch { return { tabs: [], active: null, next: 1 }; } }
 async function writeShared(s) { await writeFile(TABS_FILE, JSON.stringify(s)); }
@@ -190,12 +194,38 @@ async function syncHeadlessToShared() {
   return m ? await runAgentBrowser(['tab', m.tabId]) : true;
 }
 
+// Which browser process the tabs belong to. The headless browser losing its tabs on restart is not the same
+// event as Key closing them, and the difference decides whether they come back (Key, 2026-09-21: "restarting
+// shouldn't remove tabs. It should always be consistent like a real browser"). agent-browser writes the pid of
+// each session, so that file is the session's identity; a changed pid means a different browser.
+const AB_SESSION = (() => {
+  const i = AB_ARGS.indexOf('--session');
+  return i >= 0 && AB_ARGS[i + 1] ? AB_ARGS[i + 1] : 'thor';
+})();
+const AB_PID_FILE = `/home/key/.agent-browser/${AB_SESSION}.pid`;
+async function browserSession() {
+  try { return (await readFile(AB_PID_FILE, 'utf8')).trim() || null; } catch { return null; }
+}
+
 async function sharedFromHeadless(prev) {
   const list = await tabList();
   if (!Array.isArray(list)) return prev;                        // headless not answering: keep what we have
+
+  // A restarted browser comes back empty. Adopting that would throw away tabs nobody closed, so instead put the
+  // stored ones back into it — the same direction used when leaving Live. Within one session we adopt as normal,
+  // which is what keeps a tab Key closed from reappearing.
+  const session = await browserSession();
+  if (session && prev.session && session !== prev.session && prev.tabs.length) {
+    await writeShared({ ...prev, session });                    // claim the new session first: restoring reads this
+    await syncHeadlessToShared();
+    const back = await tabList();
+    if (Array.isArray(back) && back.length) return await sharedFromHeadless({ ...prev, session });
+    return { ...prev, session };
+  }
+  if (session && session !== prev.session) prev = { ...prev, session };
   let next = prev.next || 1;
   const tabs = list.filter(t => /^https?:\/\//.test(t.url || '')).map(t => ({ id: 'S' + (t.tabId || next++), url: t.url, title: t.title || '' }));
-  const act = list.find(t => t.active), s = cleanShared({ tabs, active: act ? 'S' + act.tabId : null, next });
+  const act = list.find(t => t.active), s = cleanShared({ tabs, active: act ? 'S' + act.tabId : null, next, session: prev.session });
   await writeShared(s); return s;
 }
 

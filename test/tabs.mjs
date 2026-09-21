@@ -92,6 +92,28 @@ try {
   const s5 = await get('/api/shared-tabs');
   check('stream: agent open updates the shared list', act(s5) === P('/c'), s5);
   check('no duplicate URLs in the shared list', new Set(s5.tabs.map(t => t.url)).size === s5.tabs.length, s5.tabs.map(t => t.url));
+
+  // 8. the browser restarting must not lose tabs (Key, 2026-09-21: "it should always be consistent like a real
+  // browser"). This is what actually happened to him: a restart came back empty and the empty list was adopted.
+  await ab([...SESS, 'tab', 'new', P('/keepme')]);
+  const before8 = (await get('/api/shared-tabs?raw')).tabs.map(t => t.url).sort();
+  await ab([...SESS, 'close'], 20000);                                 // the browser goes away, tabs and all
+  await sleep(1500);
+  await ab([...SESS, 'open', P('/after-restart')]);                    // a fresh browser, one unrelated tab
+  const restored = await until(async () => {
+    const s = await get('/api/shared-tabs');                           // stream mode: this is what adopts or restores
+    return before8.every(u => s.tabs.some(t => t.url === u)) ? s : null;
+  }, 25000);
+  check('a browser restart puts the tabs back', !!restored, restored ? restored.tabs.map(t => t.url) : (await get('/api/shared-tabs')).tabs.map(t => t.url));
+
+  // ...but a tab Key closes himself still stays closed, which is the case a naive restore would break.
+  const doomed8 = (await get('/api/shared-tabs?raw')).tabs.find(t => t.url.endsWith('/keepme'));
+  if (doomed8) await post('/api/tabs/close', { id: doomed8.id.replace(/^S/, 't') });
+  const stayed = await until(async () => {
+    const s = await get('/api/shared-tabs');
+    return s.tabs.some(t => t.url.endsWith('/keepme')) ? null : s;
+  }, 12000);
+  check('a tab Key closes does not come back', !!stayed, stayed ? stayed.tabs.map(t => t.url) : 'still present');
 } finally {
   await browser?.close(); srv.kill(); page.close();
   await ab([...SESS, 'close'], 20000); rmSync(tmp, { recursive: true, force: true });
